@@ -61,6 +61,23 @@ const hasMatchingVariants = (items: ReadonlyArray<Item>): boolean => {
   return remainingItems.every((item) => item.variant === firstItem.variant);
 };
 
+export const canCommitItemToDestination = (
+  item: Item,
+  destinationBin: DestinationBin,
+): boolean => {
+  if (destinationBin.accepts !== item.category) {
+    return false;
+  }
+
+  const prospectiveContents = [...destinationBin.contents, item];
+
+  if (prospectiveContents.length === 3 && !hasMatchingVariants(prospectiveContents)) {
+    return false;
+  }
+
+  return true;
+};
+
 export const createInitialBoard = (config: BoardConfig): BoardState => {
   const sourceBins: ReadonlyArray<SourceBin> = config.sourceBins.map((sourceBin) => ({
     id: sourceBin.id,
@@ -220,7 +237,7 @@ export const commitItem = (
   }
 
   const prospectiveContents = [...destinationBin.contents, item];
-  if (prospectiveContents.length === 3 && !hasMatchingVariants(prospectiveContents)) {
+  if (!canCommitItemToDestination(item, destinationBin)) {
     return createMoveResult(state, false, 'variants do not match');
   }
 
@@ -303,16 +320,7 @@ export const checkStuckState = (state: BoardState): boolean => {
     }
 
     return state.destinationBins.some((destinationBin) => {
-      if (destinationBin.accepts !== item.category) {
-        return false;
-      }
-
-      const prospectiveContents = [...destinationBin.contents, item];
-      if (prospectiveContents.length === 3 && !hasMatchingVariants(prospectiveContents)) {
-        return false;
-      }
-
-      return true;
+      return canCommitItemToDestination(item, destinationBin);
     });
   });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   applyMove,
+  canCommitItemToDestination,
   checkStuckState,
   checkWinCondition,
   commitItem,
@@ -203,6 +204,17 @@ describe('engine board mechanics', () => {
     expect(result.success).toBe(false);
     expect(result.reason).toBe('wrong category');
     expect(result.nextState).toBe(state);
+  });
+
+  it('canCommitItemToDestination matches commit legality for category and variants', () => {
+    const matching = makeItem('med-1', 'medical', 'syringe' as ItemVariant<'medical'>);
+    const mismatched = makeItem('med-2', 'medical', 'vial' as ItemVariant<'medical'>);
+    const acceptingBin = makeDestinationBin('dest-med', 'medical', [matching, matching]);
+    const wrongCategoryBin = makeDestinationBin('dest-industrial', 'industrial');
+
+    expect(canCommitItemToDestination(matching, acceptingBin)).toBe(true);
+    expect(canCommitItemToDestination(mismatched, acceptingBin)).toBe(false);
+    expect(canCommitItemToDestination(matching, wrongCategoryBin)).toBe(false);
   });
 
   it('committing 3 matching items completes a group', () => {

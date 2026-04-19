@@ -1,4 +1,7 @@
+// @vitest-environment jsdom
+
 import { beforeEach, describe, expect, it } from 'vitest';
+import { renderHook } from '@testing-library/react';
 
 import { createItemId } from '../../src/engine';
 import type { BoardConfig, Item, ItemCategory, ItemVariant, Move } from '../../src/engine';
@@ -10,7 +13,6 @@ import {
   useSourceBins,
   useStagingSlots,
 } from '../../src/state';
-import { renderHook } from '../support/render-hook';
 type ItemForCategory<TCategory extends ItemCategory> = Extract<
   Item,
   { category: TCategory }

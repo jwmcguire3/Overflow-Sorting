@@ -13,6 +13,11 @@ export type Frame = {
   readonly height: number;
 };
 
+export type Point = {
+  readonly x: number;
+  readonly y: number;
+};
+
 export type BoardLayout = {
   readonly canvasWidth: number;
   readonly canvasHeight: number;
@@ -131,6 +136,18 @@ export const getBoardLayout = (
 };
 
 export const getTopLayer = (bin: SourceBin): ReadonlyArray<Item> => bin.layers[0] ?? [];
+
+export const frameContainsPoint = (frame: Frame, point: Point): boolean =>
+  point.x >= frame.x &&
+  point.x <= frame.x + frame.width &&
+  point.y >= frame.y &&
+  point.y <= frame.y + frame.height;
+
+export const findFrameIndexAtPoint = (
+  frames: ReadonlyArray<Frame>,
+  point: Point,
+): number =>
+  frames.findIndex((frame) => frameContainsPoint(frame, point));
 
 export const getVariantLetter = (item: Item): string =>
   String(item.variant).charAt(0).toUpperCase();

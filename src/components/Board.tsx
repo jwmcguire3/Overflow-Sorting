@@ -10,9 +10,22 @@ import {
   matchFont,
 } from '@shopify/react-native-skia';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
-import type { DestinationBin, ItemId, SourceBin, StagingSlot } from '../engine';
+import {
+  canCommitItemToDestination,
+  type DestinationBin,
+  type Item,
+  type ItemId,
+  type SourceBin,
+  type StagingSlot,
+} from '../engine';
 import {
   useDestinationBins,
   useGameStatus,
@@ -22,6 +35,7 @@ import {
   useStagingSlots,
 } from '../state';
 import {
+  findFrameIndexAtPoint,
   getBoardLayout,
   getCategoryColor,
   getItemCirclePositions,
@@ -36,12 +50,28 @@ type FlashState = {
   readonly destinationBinId: string | null;
 };
 
+type DragHoverState = {
+  readonly destinationBinId: string | null;
+  readonly isValid: boolean | null;
+};
+
+type DragState = {
+  readonly item: Item;
+  readonly stagingIndex: number;
+  readonly originFrame: Frame;
+};
+
+type DestinationHighlightState = 'none' | 'valid' | 'invalid' | 'flash';
+
 const BACKGROUND_COLOR = '#F5F1E8';
 const PANEL_COLOR = '#E6DFD2';
 const PANEL_STROKE = '#6F675C';
 const EMPTY_SLOT_COLOR = '#FFFFFF';
 const LABEL_COLOR = '#2F2A24';
 const FLASH_COLOR = '#E05151';
+const VALID_HIGHLIGHT_FILL = '#E9F1E7';
+const VALID_HIGHLIGHT_STROKE = '#5A8661';
+const INVALID_HIGHLIGHT_FILL = '#F8D9D6';
 const SOURCE_FONT = matchFont({
   fontFamily: 'Arial',
   fontSize: 16,
@@ -62,6 +92,15 @@ const ITEM_FONT = matchFont({
 });
 const WARNING_COLOR = '#C78A11';
 const DANGER_COLOR = '#B5412C';
+const DRAG_SCALE = 1.08;
+const DROP_SNAP_DURATION_MS = 120;
+
+const getFrameCenter = (frame: Frame) => ({
+  x: frame.x + frame.width / 2,
+  y: frame.y + frame.height * 0.62,
+});
+
+const getStagingItemRadius = (frame: Frame) => Math.min(22, frame.width / 5);
 
 type OverlayAction = {
   readonly label: string;
@@ -148,6 +187,7 @@ const renderStagingSlot = (
   frame: Frame,
   isSelected: boolean,
   isFlashing: boolean,
+  hideItem: boolean,
 ) => {
   const borderColor = isFlashing
     ? FLASH_COLOR
@@ -155,7 +195,7 @@ const renderStagingSlot = (
       ? '#1E1E1E'
       : PANEL_STROKE;
   const borderWidth = isSelected ? 5 : 3;
-  const item = slot.item;
+  const item = hideItem ? null : slot.item;
 
   return (
     <Group key={'staging-' + String(slot.index)}>
@@ -208,9 +248,23 @@ const renderStagingSlot = (
 const renderDestinationBin = (
   bin: DestinationBin,
   frame: Frame,
-  isFlashing: boolean,
+  highlightState: DestinationHighlightState,
 ) => {
-  const fillColor = isFlashing ? FLASH_COLOR : PANEL_COLOR;
+  const fillColor =
+    highlightState === 'flash'
+      ? FLASH_COLOR
+      : highlightState === 'valid'
+        ? VALID_HIGHLIGHT_FILL
+        : highlightState === 'invalid'
+          ? INVALID_HIGHLIGHT_FILL
+          : PANEL_COLOR;
+  const strokeColor =
+    highlightState === 'valid'
+      ? VALID_HIGHLIGHT_STROKE
+      : highlightState === 'invalid' || highlightState === 'flash'
+        ? FLASH_COLOR
+        : PANEL_STROKE;
+  const strokeWidth = highlightState === 'none' ? 3 : 5;
   const itemPositions = getItemCirclePositions(frame, bin.contents.length);
 
   return (
@@ -222,6 +276,16 @@ const renderDestinationBin = (
         height={frame.height}
         r={18}
         color={fillColor}
+      />
+      <RoundedRect
+        x={frame.x}
+        y={frame.y}
+        width={frame.width}
+        height={frame.height}
+        r={18}
+        color={strokeColor}
+        style="stroke"
+        strokeWidth={strokeWidth}
       />
       <SkiaText
         x={frame.x + 12}
@@ -329,6 +393,48 @@ const StatusOverlay = ({
   </View>
 );
 
+const getDestinationHighlightState = (
+  destinationBinId: string,
+  flashState: FlashState,
+  dragHoverState: DragHoverState,
+): DestinationHighlightState => {
+  if (flashState.destinationBinId === destinationBinId) {
+    return 'flash';
+  }
+
+  if (dragHoverState.destinationBinId !== destinationBinId) {
+    return 'none';
+  }
+
+  return dragHoverState.isValid ? 'valid' : 'invalid';
+};
+
+const DraggedItem = ({
+  item,
+  diameter,
+  animatedStyle,
+}: {
+  readonly item: Item;
+  readonly diameter: number;
+  readonly animatedStyle: object;
+}) => (
+  <Animated.View
+    pointerEvents="none"
+    style={[
+      styles.draggedItem,
+      {
+        width: diameter,
+        height: diameter,
+        borderRadius: diameter / 2,
+        backgroundColor: getCategoryColor(item.category),
+      },
+      animatedStyle,
+    ]}
+  >
+    <Text style={styles.draggedItemLabel}>{getVariantLetter(item)}</Text>
+  </Animated.View>
+);
+
 export function Board({
   headerAccessory,
   onNextLevel,
@@ -353,7 +459,16 @@ export function Board({
     stagingIndex: null,
     destinationBinId: null,
   });
+  const [dragState, setDragState] = useState<DragState | null>(null);
+  const [dragHoverState, setDragHoverState] = useState<DragHoverState>({
+    destinationBinId: null,
+    isValid: null,
+  });
   const flashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragX = useSharedValue(0);
+  const dragY = useSharedValue(0);
+  const dragScale = useSharedValue(1);
+  const dragOpacity = useSharedValue(0);
 
   const layout = getBoardLayout(
     boardSize.width,
@@ -381,6 +496,20 @@ export function Board({
     [],
   );
 
+  useEffect(() => {
+    if (status === 'playing') {
+      return;
+    }
+
+    setDragState(null);
+    setDragHoverState({
+      destinationBinId: null,
+      isValid: null,
+    });
+    dragOpacity.value = 0;
+    dragScale.value = 1;
+  }, [dragOpacity, dragScale, status]);
+
   const flashElement = (nextFlash: FlashState) => {
     if (flashTimeoutRef.current) {
       clearTimeout(flashTimeoutRef.current);
@@ -401,6 +530,194 @@ export function Board({
     const { width, height } = event.nativeEvent.layout;
     setBoardSize({ width, height });
   };
+
+  const clearDragInteraction = () => {
+    setDragState(null);
+    setDragHoverState({
+      destinationBinId: null,
+      isValid: null,
+    });
+    dragOpacity.value = 0;
+    dragScale.value = 1;
+  };
+
+  const animateDragBackToOrigin = (nextSelectedId: ItemId | null) => {
+    if (!dragState) {
+      return;
+    }
+
+    const originCenter = getFrameCenter(dragState.originFrame);
+    dragScale.value = withSpring(1, {
+      stiffness: 240,
+      damping: 18,
+      mass: 0.7,
+    });
+    dragX.value = withSpring(originCenter.x, {
+      stiffness: 260,
+      damping: 18,
+      mass: 0.75,
+    });
+    dragY.value = withSpring(originCenter.y, {
+      stiffness: 260,
+      damping: 18,
+      mass: 0.75,
+    }, () => {
+      scheduleOnRN(setSelectedId, nextSelectedId);
+      scheduleOnRN(clearDragInteraction);
+    });
+  };
+
+  const updateDragHover = (pointX: number, pointY: number, item: Item) => {
+    const destinationIndex = findFrameIndexAtPoint(layout.destinationFrames, {
+      x: pointX,
+      y: pointY,
+    });
+    const hoveredDestination = destinationBins[destinationIndex] ?? null;
+    const nextHoverState: DragHoverState = hoveredDestination
+      ? {
+          destinationBinId: hoveredDestination.id,
+          isValid: canCommitItemToDestination(item, hoveredDestination),
+        }
+      : {
+          destinationBinId: null,
+          isValid: null,
+        };
+
+    setDragHoverState((current) =>
+      current.destinationBinId === nextHoverState.destinationBinId &&
+      current.isValid === nextHoverState.isValid
+        ? current
+        : nextHoverState,
+    );
+  };
+
+  const startDrag = (stagingIndex: number) => {
+    if (status !== 'playing') {
+      return;
+    }
+
+    const slot = stagingSlots.find((candidate) => candidate.index === stagingIndex);
+    const frame = layout.stagingFrames[stagingIndex];
+    if (!slot?.item || !frame) {
+      return;
+    }
+
+    const originCenter = getFrameCenter(frame);
+    setDragState({
+      item: slot.item,
+      stagingIndex,
+      originFrame: frame,
+    });
+    setDragHoverState({
+      destinationBinId: null,
+      isValid: null,
+    });
+    setSelectedId(slot.item.id);
+    dragX.value = originCenter.x;
+    dragY.value = originCenter.y;
+    dragScale.value = withTiming(DRAG_SCALE, { duration: 120 });
+    dragOpacity.value = 1;
+  };
+
+  const updateDrag = (stagingIndex: number, translationX: number, translationY: number) => {
+    const slot = stagingSlots.find((candidate) => candidate.index === stagingIndex);
+    const frame = layout.stagingFrames[stagingIndex];
+    if (!slot?.item || !frame) {
+      return;
+    }
+
+    const originCenter = getFrameCenter(frame);
+    const nextX = originCenter.x + translationX;
+    const nextY = originCenter.y + translationY;
+    dragX.value = nextX;
+    dragY.value = nextY;
+    updateDragHover(nextX, nextY, slot.item);
+  };
+
+  const finishDrag = (stagingIndex: number, translationX: number, translationY: number) => {
+    const slot = stagingSlots.find((candidate) => candidate.index === stagingIndex);
+    const frame = layout.stagingFrames[stagingIndex];
+    if (!slot?.item || !frame) {
+      clearDragInteraction();
+      return;
+    }
+
+    const originCenter = getFrameCenter(frame);
+    const releasePoint = {
+      x: originCenter.x + translationX,
+      y: originCenter.y + translationY,
+    };
+    const destinationIndex = findFrameIndexAtPoint(layout.destinationFrames, releasePoint);
+    const hoveredDestination = destinationBins[destinationIndex] ?? null;
+
+    if (!hoveredDestination) {
+      animateDragBackToOrigin(slot.item.id);
+      return;
+    }
+
+    if (!canCommitItemToDestination(slot.item, hoveredDestination)) {
+      flashElement({
+        sourceBinId: null,
+        stagingIndex,
+        destinationBinId: hoveredDestination.id,
+      });
+      animateDragBackToOrigin(slot.item.id);
+      return;
+    }
+
+    const destinationFrame = layout.destinationFrames[destinationIndex];
+    if (!destinationFrame) {
+      animateDragBackToOrigin(slot.item.id);
+      return;
+    }
+
+    const draggedItemId = slot.item.id;
+    const completeValidDrop = (
+      itemId: ItemId,
+      destinationBinId: string,
+      draggedStagingIndex: number,
+    ) => {
+      const result = applyMove({
+        type: 'commit',
+        itemId,
+        destBinId: destinationBinId,
+      });
+
+      if (!result.success) {
+        flashElement({
+          sourceBinId: null,
+          stagingIndex: draggedStagingIndex,
+          destinationBinId,
+        });
+        animateDragBackToOrigin(itemId);
+        return;
+      }
+
+      setSelectedId(null);
+      clearDragInteraction();
+    };
+    const destinationCenter = getFrameCenter(destinationFrame);
+    dragScale.value = withTiming(1, { duration: DROP_SNAP_DURATION_MS });
+    dragX.value = withTiming(destinationCenter.x, { duration: DROP_SNAP_DURATION_MS });
+    dragY.value = withTiming(destinationCenter.y, { duration: DROP_SNAP_DURATION_MS }, () => {
+      scheduleOnRN(completeValidDrop, draggedItemId, hoveredDestination.id, stagingIndex);
+    });
+  };
+
+  const draggedItemAnimatedStyle = useAnimatedStyle(() => {
+    const draggedItemRadius = dragState ? getStagingItemRadius(dragState.originFrame) : 0;
+
+    return {
+      opacity: dragOpacity.value,
+      transform: [
+        { translateX: dragX.value },
+        { translateY: dragY.value },
+        { translateX: -draggedItemRadius },
+        { translateY: -draggedItemRadius },
+        { scale: dragScale.value },
+      ],
+    };
+  }, [dragState]);
 
   const handleSourceTapById = (sourceBinId: string) => {
     const bin = sourceBins.find((candidate) => candidate.id === sourceBinId);
@@ -532,6 +849,9 @@ export function Board({
         ]}
       />
     ) : null;
+  const draggedItemDiameter = dragState
+    ? getStagingItemRadius(dragState.originFrame) * 2
+    : 0;
 
   return (
     <View style={styles.container}>
@@ -607,6 +927,7 @@ export function Board({
                   frame,
                   slot.item?.id === selectedId,
                   flashState.stagingIndex === slot.index,
+                  dragState?.item.id === slot.item?.id,
                 );
               })}
               {destinationBins.map((bin, index) => {
@@ -618,19 +939,28 @@ export function Board({
                 return renderDestinationBin(
                   bin,
                   frame,
-                  flashState.destinationBinId === bin.id,
+                  getDestinationHighlightState(bin.id, flashState, dragHoverState),
                 );
               })}
             </Canvas>
+            {dragState ? (
+              <DraggedItem
+                item={dragState.item}
+                diameter={draggedItemDiameter}
+                animatedStyle={draggedItemAnimatedStyle}
+              />
+            ) : null}
             {sourceBins.map((bin, index) => {
               const frame = layout.sourceFrames[index];
               if (!frame) {
                 return null;
               }
 
-              const tapGesture = Gesture.Tap().onEnd(() => {
-                scheduleOnRN(handleSourceTapById, bin.id);
-              });
+              const tapGesture = Gesture.Tap()
+                .enabled(dragState === null)
+                .onEnd(() => {
+                  scheduleOnRN(handleSourceTapById, bin.id);
+                });
 
               return (
                 <GestureDetector key={'source-hit-' + bin.id} gesture={tapGesture}>
@@ -648,14 +978,37 @@ export function Board({
                 return null;
               }
 
-              const tapGesture = Gesture.Tap().onEnd(() => {
-                scheduleOnRN(handleStagingTapByIndex, slot.index);
-              });
+              const tapGesture = Gesture.Tap()
+                .enabled(Boolean(slot.item))
+                .onEnd(() => {
+                  scheduleOnRN(handleStagingTapByIndex, slot.index);
+                });
+              const panGesture = Gesture.Pan()
+                .enabled(status === 'playing' && slot.item !== null)
+                .activateAfterLongPress(0)
+                .minDistance(4)
+                .runOnJS(true)
+                .onStart(() => {
+                  startDrag(slot.index);
+                })
+                .onUpdate((event) => {
+                  updateDrag(slot.index, event.translationX, event.translationY);
+                })
+                .onEnd((event) => {
+                  finishDrag(slot.index, event.translationX, event.translationY);
+                })
+                .onFinalize(() => {
+                  setDragHoverState({
+                    destinationBinId: null,
+                    isValid: null,
+                  });
+                });
+              const stagingGesture = Gesture.Race(panGesture, tapGesture);
 
               return (
                 <GestureDetector
                   key={'staging-hit-' + String(slot.index)}
-                  gesture={tapGesture}
+                  gesture={stagingGesture}
                 >
                   <View
                     collapsable={false}
@@ -671,9 +1024,11 @@ export function Board({
                 return null;
               }
 
-              const tapGesture = Gesture.Tap().onEnd(() => {
-                scheduleOnRN(handleDestinationTapById, bin.id);
-              });
+              const tapGesture = Gesture.Tap()
+                .enabled(dragState === null)
+                .onEnd(() => {
+                  scheduleOnRN(handleDestinationTapById, bin.id);
+                });
 
               return (
                 <GestureDetector
@@ -737,6 +1092,28 @@ const styles = StyleSheet.create({
   },
   boardSurface: {
     flex: 1,
+  },
+  draggedItem: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    shadowColor: '#1A140F',
+    shadowOffset: {
+      width: 0,
+      height: 10,
+    },
+    shadowOpacity: 0.24,
+    shadowRadius: 14,
+    elevation: 10,
+    zIndex: 2,
+  },
+  draggedItemLabel: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   toolbar: {
     paddingHorizontal: 16,
