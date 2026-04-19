@@ -1,0 +1,35 @@
+{
+  "id": "01-first-sort",
+  "chapter": 1,
+  "levelNumber": 1,
+  "stagingCapacity": 7,
+  "moveBudget": null,
+  "objective": "clean-sort",
+  "sourceBins": [
+    {
+      "id": "source-a",
+      "layers": [
+        [
+          {
+            "category": "medical",
+            "variant": "syringe"
+          },
+          {
+            "category": "medical",
+            "variant": "syringe"
+          },
+          {
+            "category": "medical",
+            "variant": "syringe"
+          }
+        ]
+      ]
+    }
+  ],
+  "destinationBins": [
+    {
+      "id": "dest-med-a",
+      "accepts": "medical"
+    }
+  ]
+}

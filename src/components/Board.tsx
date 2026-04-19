@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { LayoutChangeEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   Canvas,
@@ -13,7 +13,6 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 
 import type { DestinationBin, ItemId, SourceBin, StagingSlot } from '../engine';
-import { TEST_LEVEL_CONFIG } from '../data/levels';
 import {
   useDestinationBins,
   useGameStatus,
@@ -330,7 +329,15 @@ const StatusOverlay = ({
   </View>
 );
 
-export function Board() {
+export function Board({
+  headerAccessory,
+  onNextLevel,
+  onRetryLevel,
+}: {
+  readonly headerAccessory?: ReactNode;
+  readonly onNextLevel?: () => void;
+  readonly onRetryLevel?: () => void;
+}) {
   const sourceBins = useSourceBins();
   const stagingSlots = useStagingSlots();
   const destinationBins = useDestinationBins();
@@ -338,8 +345,6 @@ export function Board() {
   const status = useGameStatus();
   const applyMove = useGameStore((state) => state.applyMove);
   const undo = useGameStore((state) => state.undo);
-  const loadBoard = useGameStore((state) => state.loadBoard);
-  const reset = useGameStore((state) => state.reset);
   const historyLength = useGameStore((state) => state.boardState?.history.length ?? 0);
   const [boardSize, setBoardSize] = useState({ width: 0, height: 0 });
   const [selectedId, setSelectedId] = useState<ItemId | null>(null);
@@ -471,12 +476,6 @@ export function Board() {
     }
   };
 
-  const reloadTestLevel = () => {
-    setSelectedId(null);
-    reset();
-    loadBoard(TEST_LEVEL_CONFIG);
-  };
-
   const moveBudgetLabel =
     moveInfo.budget === null
       ? `Moves: ${String(moveInfo.used)} / ∞`
@@ -490,7 +489,10 @@ export function Board() {
         actions={[
           {
             label: 'Retry',
-            onPress: reloadTestLevel,
+            onPress: () => {
+              setSelectedId(null);
+              onRetryLevel?.();
+            },
           },
         ]}
       />
@@ -500,7 +502,10 @@ export function Board() {
         actions={[
           {
             label: 'Next level',
-            onPress: reloadTestLevel,
+            onPress: () => {
+              setSelectedId(null);
+              (onNextLevel ?? onRetryLevel)?.();
+            },
           },
         ]}
       />
@@ -519,7 +524,10 @@ export function Board() {
             : []),
           {
             label: 'Retry level',
-            onPress: reloadTestLevel,
+            onPress: () => {
+              setSelectedId(null);
+              onRetryLevel?.();
+            },
           },
         ]}
       />
@@ -531,6 +539,7 @@ export function Board() {
         <Text style={[styles.headerText, { color: moveBudgetColor }]}>
           {moveBudgetLabel}
         </Text>
+        {headerAccessory ? <View style={styles.headerAccessory}>{headerAccessory}</View> : null}
       </View>
       <View style={styles.boardSurface} onLayout={onLayout}>
         {boardSize.width > 0 && boardSize.height > 0 ? (
@@ -707,6 +716,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 10,
@@ -718,6 +730,10 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
     letterSpacing: 0.2,
+  },
+  headerAccessory: {
+    marginLeft: 12,
+    alignItems: 'flex-end',
   },
   boardSurface: {
     flex: 1,

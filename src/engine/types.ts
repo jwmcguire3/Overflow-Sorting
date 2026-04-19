@@ -1,22 +1,24 @@
-export type ItemCategory =
-  | 'medical'
-  | 'industrial'
-  | 'harbor'
-  | 'restoration'
-  | 'produce'
-  | 'chemical';
+export const ITEM_VARIANTS_BY_CATEGORY = {
+  medical: ['syringe', 'vial', 'bandage'],
+  industrial: ['gear', 'valve', 'bearing'],
+  harbor: ['crate', 'barrel', 'net'],
+  restoration: ['clay', 'canvas', 'frame'],
+  produce: ['citrus', 'green', 'root'],
+  chemical: ['reagent', 'solvent', 'catalyst'],
+} as const;
+
+export type ItemCategory = keyof typeof ITEM_VARIANTS_BY_CATEGORY;
+
+export const ITEM_CATEGORIES = Object.keys(
+  ITEM_VARIANTS_BY_CATEGORY,
+) as ReadonlyArray<ItemCategory>;
 
 type Brand<T, TBrand extends string> = T & {
   readonly __brand: TBrand;
 };
 
 type ItemVariantMap = {
-  readonly medical: 'syringe' | 'vial' | 'bandage';
-  readonly industrial: 'gear' | 'valve' | 'bearing';
-  readonly harbor: 'crate' | 'barrel' | 'net';
-  readonly restoration: 'clay' | 'canvas' | 'frame';
-  readonly produce: 'citrus' | 'green' | 'root';
-  readonly chemical: 'reagent' | 'solvent' | 'catalyst';
+  readonly [TCategory in ItemCategory]: (typeof ITEM_VARIANTS_BY_CATEGORY)[TCategory][number];
 };
 
 export type ItemVariant<TCategory extends ItemCategory = ItemCategory> = Brand<

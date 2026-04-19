@@ -1,0 +1,53 @@
+{
+  "id": "02-two-variants",
+  "chapter": 1,
+  "levelNumber": 2,
+  "stagingCapacity": 6,
+  "moveBudget": null,
+  "objective": "clean-sort",
+  "sourceBins": [
+    {
+      "id": "source-a",
+      "layers": [
+        [
+          {
+            "category": "medical",
+            "variant": "syringe"
+          },
+          {
+            "category": "medical",
+            "variant": "syringe"
+          },
+          {
+            "category": "medical",
+            "variant": "syringe"
+          }
+        ],
+        [
+          {
+            "category": "medical",
+            "variant": "vial"
+          },
+          {
+            "category": "medical",
+            "variant": "vial"
+          },
+          {
+            "category": "medical",
+            "variant": "vial"
+          }
+        ]
+      ]
+    }
+  ],
+  "destinationBins": [
+    {
+      "id": "dest-med-a",
+      "accepts": "medical"
+    },
+    {
+      "id": "dest-med-b",
+      "accepts": "medical"
+    }
+  ]
+}

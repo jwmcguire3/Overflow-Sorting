@@ -133,7 +133,7 @@ export const getBoardLayout = (
 export const getTopLayer = (bin: SourceBin): ReadonlyArray<Item> => bin.layers[0] ?? [];
 
 export const getVariantLetter = (item: Item): string =>
-  item.variant.charAt(0).toUpperCase();
+  String(item.variant).charAt(0).toUpperCase();
 
 export const getItemCirclePositions = (
   frame: Frame,

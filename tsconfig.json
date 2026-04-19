@@ -4,6 +4,7 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
+    "resolveJsonModule": true,
     "types": ["vitest/globals"]
   },
   "include": [

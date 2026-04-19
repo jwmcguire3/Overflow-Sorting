@@ -1,0 +1,58 @@
+{
+  "id": "03-staging-pressure",
+  "chapter": 1,
+  "levelNumber": 3,
+  "stagingCapacity": 5,
+  "moveBudget": null,
+  "objective": "clean-sort",
+  "sourceBins": [
+    {
+      "id": "source-a",
+      "layers": [
+        [
+          {
+            "category": "medical",
+            "variant": "syringe"
+          },
+          {
+            "category": "medical",
+            "variant": "vial"
+          },
+          {
+            "category": "medical",
+            "variant": "syringe"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "source-b",
+      "layers": [
+        [
+          {
+            "category": "medical",
+            "variant": "vial"
+          },
+          {
+            "category": "medical",
+            "variant": "syringe"
+          },
+          {
+            "category": "medical",
+            "variant": "vial"
+          }
+        ]
+      ]
+    }
+  ],
+  "destinationBins": [
+    {
+      "id": "dest-med-a",
+      "accepts": "medical"
+    },
+    {
+      "id": "dest-med-b",
+      "accepts": "medical"
+    }
+  ]
+}
