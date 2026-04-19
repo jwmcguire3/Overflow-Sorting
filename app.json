@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Overflow Sorting",
+    "slug": "overflow-sorting",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": [
+      "**/*"
+    ]
+  }
+}
