@@ -10,7 +10,7 @@ import {
   matchFont,
 } from '@shopify/react-native-skia';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-reanimated';
+import { runOnJS } from 'react-native-worklets';
 
 import type { DestinationBin, ItemId, SourceBin, StagingSlot } from '../engine';
 import {

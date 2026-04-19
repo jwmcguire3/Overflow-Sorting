@@ -11,7 +11,6 @@ import {
   useStagingSlots,
 } from '../../src/state';
 import { renderHook } from '../support/render-hook';
-
 type ItemForCategory<TCategory extends ItemCategory> = Extract<
   Item,
   { category: TCategory }
