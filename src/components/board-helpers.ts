@@ -152,6 +152,9 @@ export const findFrameIndexAtPoint = (
 export const getVariantLetter = (item: Item): string =>
   String(item.variant).charAt(0).toUpperCase();
 
+export const getDestinationBinLockItem = (bin: DestinationBin): Item | null =>
+  bin.contents.length > 0 && bin.contents.length < 3 ? (bin.contents[0] ?? null) : null;
+
 export const getItemCirclePositions = (
   frame: Frame,
   count: number,

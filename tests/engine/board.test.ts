@@ -209,12 +209,29 @@ describe('engine board mechanics', () => {
   it('canCommitItemToDestination matches commit legality for category and variants', () => {
     const matching = makeItem('med-1', 'medical', 'syringe' as ItemVariant<'medical'>);
     const mismatched = makeItem('med-2', 'medical', 'vial' as ItemVariant<'medical'>);
-    const acceptingBin = makeDestinationBin('dest-med', 'medical', [matching, matching]);
+    const acceptingBin = makeDestinationBin('dest-med', 'medical', [matching]);
     const wrongCategoryBin = makeDestinationBin('dest-industrial', 'industrial');
 
     expect(canCommitItemToDestination(matching, acceptingBin)).toBe(true);
     expect(canCommitItemToDestination(mismatched, acceptingBin)).toBe(false);
     expect(canCommitItemToDestination(matching, wrongCategoryBin)).toBe(false);
+  });
+
+  it('committing a second mismatched variant is rejected immediately and state unchanged', () => {
+    const first = makeItem('med-1', 'medical', 'syringe' as ItemVariant<'medical'>);
+    const second = makeItem('med-2', 'medical', 'vial' as ItemVariant<'medical'>);
+
+    const state = makeBoardState({
+      destinationBins: [makeDestinationBin('dest-med', 'medical', [first])],
+      stagingSlots: makeStagingSlots([second]),
+      stagingCapacity: 1,
+    });
+
+    const result = commitItem(state, second.id, 'dest-med');
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('variants do not match');
+    expect(result.nextState).toBe(state);
   });
 
   it('committing 3 matching items completes a group', () => {
@@ -252,6 +269,37 @@ describe('engine board mechanics', () => {
     expect(result.success).toBe(false);
     expect(result.reason).toBe('variants do not match');
     expect(result.nextState).toBe(state);
+  });
+
+  it('after a completed group clears, the empty bin accepts a new variant', () => {
+    const first = makeItem('med-1', 'medical', 'syringe' as ItemVariant<'medical'>);
+    const second = makeItem('med-2', 'medical', 'syringe' as ItemVariant<'medical'>);
+    const third = makeItem('med-3', 'medical', 'syringe' as ItemVariant<'medical'>);
+    const nextVariant = makeItem('med-4', 'medical', 'vial' as ItemVariant<'medical'>);
+
+    const clearingState = makeBoardState({
+      destinationBins: [makeDestinationBin('dest-med', 'medical', [first, second])],
+      stagingSlots: makeStagingSlots([third]),
+      stagingCapacity: 1,
+    });
+
+    const cleared = commitItem(clearingState, third.id, 'dest-med');
+    expect(cleared.success).toBe(true);
+    expect(cleared.nextState.destinationBins[0]?.contents).toEqual([]);
+
+    const nextState = makeBoardState({
+      ...cleared.nextState,
+      stagingSlots: makeStagingSlots([nextVariant]),
+      history: [],
+      movesUsed: 0,
+      status: 'playing',
+    });
+
+    const nextCommit = commitItem(nextState, nextVariant.id, 'dest-med');
+
+    expect(nextCommit.success).toBe(true);
+    expect(nextCommit.nextState.destinationBins[0]?.contents).toEqual([nextVariant]);
+    expect(nextCommit.nextState.destinationBins[0]?.completedGroups).toBe(1);
   });
 
   it('checkWinCondition is true when all sources and staging are empty and no partial groups remain', () => {
@@ -527,6 +575,33 @@ describe('engine board mechanics', () => {
     expect(secondUndo.success).toBe(true);
     expect(secondUndo.nextState.sourceBins[0]?.layers[0]?.[0]?.id).toBe(item.id);
     expect(secondUndo.nextState.movesUsed).toBe(1);
+  });
+
+  it('undo restores the prior partial destination lock state', () => {
+    const first = makeItem('med-1', 'medical', 'syringe' as ItemVariant<'medical'>);
+    const second = makeItem('med-2', 'medical', 'syringe' as ItemVariant<'medical'>);
+    const previousState = makeBoardState({
+      destinationBins: [makeDestinationBin('dest-med', 'medical', [first])],
+      stagingSlots: makeStagingSlots([second]),
+      stagingCapacity: 1,
+      movesUsed: 1,
+      status: 'playing',
+    });
+    const currentState = makeBoardState({
+      destinationBins: [makeDestinationBin('dest-med', 'medical', [first, second])],
+      stagingSlots: makeStagingSlots([null]),
+      stagingCapacity: 1,
+      history: [previousState],
+      movesUsed: 2,
+      status: 'playing',
+    });
+
+    const result = undoMove(currentState);
+
+    expect(result.success).toBe(true);
+    expect(result.nextState.destinationBins[0]?.contents).toEqual([first]);
+    expect(result.nextState.stagingSlots[0]?.item?.id).toBe(second.id);
+    expect(result.nextState.movesUsed).toBe(2);
   });
 
   it('undo with empty history fails', () => {

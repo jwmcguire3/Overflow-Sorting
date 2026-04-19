@@ -69,9 +69,16 @@ export const canCommitItemToDestination = (
     return false;
   }
 
+  if (
+    destinationBin.contents.length > 0 &&
+    destinationBin.contents[0]?.variant !== item.variant
+  ) {
+    return false;
+  }
+
   const prospectiveContents = [...destinationBin.contents, item];
 
-  if (prospectiveContents.length === 3 && !hasMatchingVariants(prospectiveContents)) {
+  if (!hasMatchingVariants(prospectiveContents)) {
     return false;
   }
 

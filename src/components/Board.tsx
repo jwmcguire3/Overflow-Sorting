@@ -38,6 +38,7 @@ import {
   findFrameIndexAtPoint,
   getBoardLayout,
   getCategoryColor,
+  getDestinationBinLockItem,
   getItemCirclePositions,
   getTopLayer,
   getVariantLetter,
@@ -72,6 +73,7 @@ const FLASH_COLOR = '#E05151';
 const VALID_HIGHLIGHT_FILL = '#E9F1E7';
 const VALID_HIGHLIGHT_STROKE = '#5A8661';
 const INVALID_HIGHLIGHT_FILL = '#F8D9D6';
+const LOCKED_FILL = '#F2ECE2';
 const SOURCE_FONT = matchFont({
   fontFamily: 'Arial',
   fontSize: 16,
@@ -250,6 +252,9 @@ const renderDestinationBin = (
   frame: Frame,
   highlightState: DestinationHighlightState,
 ) => {
+  const lockItem = getDestinationBinLockItem(bin);
+  const isLocked = lockItem !== null;
+  const lockedStrokeColor = lockItem ? getCategoryColor(lockItem.category) : PANEL_STROKE;
   const fillColor =
     highlightState === 'flash'
       ? FLASH_COLOR
@@ -257,15 +262,17 @@ const renderDestinationBin = (
         ? VALID_HIGHLIGHT_FILL
         : highlightState === 'invalid'
           ? INVALID_HIGHLIGHT_FILL
-          : PANEL_COLOR;
+          : isLocked
+            ? LOCKED_FILL
+            : PANEL_COLOR;
   const strokeColor =
     highlightState === 'valid'
       ? VALID_HIGHLIGHT_STROKE
       : highlightState === 'invalid' || highlightState === 'flash'
         ? FLASH_COLOR
-        : PANEL_STROKE;
-  const strokeWidth = highlightState === 'none' ? 3 : 5;
-  const itemPositions = getItemCirclePositions(frame, bin.contents.length);
+        : lockedStrokeColor;
+  const strokeWidth = highlightState === 'none' ? (isLocked ? 4 : 3) : 5;
+  const itemPositions = getItemCirclePositions(frame, isLocked ? 3 : bin.contents.length);
 
   return (
     <Group key={bin.id}>
@@ -297,14 +304,14 @@ const renderDestinationBin = (
       <SkiaText
         x={frame.x + 12}
         y={frame.y + 44}
-        text={String(bin.contents.length) + '/3'}
+        text={isLocked ? 'LOCKED' : 'OPEN'}
         font={BODY_FONT}
         color={LABEL_COLOR}
       />
       <SkiaText
         x={frame.x + 12}
         y={frame.y + 62}
-        text={'Cleared ' + String(bin.completedGroups)}
+        text={String(bin.contents.length) + '/3  Cleared ' + String(bin.completedGroups)}
         font={BODY_FONT}
         color={LABEL_COLOR}
       />
@@ -332,6 +339,31 @@ const renderDestinationBin = (
           </Group>
         );
       })}
+      {lockItem
+        ? itemPositions.slice(bin.contents.length).map((position, index) => (
+            <Group key={bin.id + '-ghost-' + String(index)}>
+              <Circle
+                cx={position.x}
+                cy={position.y}
+                r={position.radius}
+                color={getCategoryColor(lockItem.category)}
+              />
+              <Circle
+                cx={position.x}
+                cy={position.y}
+                r={position.radius - 4}
+                color={LOCKED_FILL}
+              />
+              <SkiaText
+                x={position.x - position.radius * 0.35}
+                y={position.y + position.radius * 0.25}
+                text={getVariantLetter(lockItem)}
+                font={ITEM_FONT}
+                color={getCategoryColor(lockItem.category)}
+              />
+            </Group>
+          ))
+        : null}
     </Group>
   );
 };
