@@ -17,7 +17,7 @@ import type {
 describe('engine types exports', () => {
   it('provides all declared exports as usable types and values', () => {
     const itemId: ItemId = createItemId('item-1');
-    const category: ItemCategory = 'medical';
+    const category = 'medical' as const satisfies ItemCategory;
     const variant: ItemVariant<'medical'> = 'syringe' as ItemVariant<'medical'>;
 
     const item: Item = {

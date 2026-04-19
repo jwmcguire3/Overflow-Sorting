@@ -4,12 +4,13 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
-    "types": ["vitest/globals", "@testing-library/jest-native"]
+    "types": ["vitest/globals"]
   },
   "include": [
     "App.tsx",
     "src",
     "tests",
+    "vitest.config.ts",
     "vitest.setup.ts"
   ]
 }

@@ -20,18 +20,23 @@ import type {
   StagingSlot,
 } from '../../src/engine';
 
+type ItemForCategory<TCategory extends ItemCategory> = Extract<
+  Item,
+  { category: TCategory }
+>;
+
 const makeItem = <TCategory extends ItemCategory>(
   id: string,
   category: TCategory,
   variant: ItemVariant<TCategory>,
-): Item => ({
+): ItemForCategory<TCategory> => ({
   id: createItemId(id),
   category,
   variant,
   stability: 'stable',
   timer: null,
   paused: false,
-});
+} as ItemForCategory<TCategory>);
 
 const makeSourceBin = (id: string, layers: ReadonlyArray<ReadonlyArray<Item>>): SourceBin => ({
   id,
@@ -243,7 +248,7 @@ describe('engine board mechanics', () => {
     expect(checkWinCondition(state)).toBe(true);
   });
 
-  it('commit sets status to won when win condition is met', () => {
+  it('commit keeps status playing when a partial destination group remains', () => {
     const item = makeItem('med-1', 'medical', 'syringe' as ItemVariant<'medical'>);
     const state = makeBoardState({
       sourceBins: [makeSourceBin('source-a', [])],
@@ -255,10 +260,10 @@ describe('engine board mechanics', () => {
     const result = commitItem(state, item.id, 'dest-med');
 
     expect(result.success).toBe(true);
-    expect(result.nextState.status).toBe('won');
+    expect(result.nextState.status).toBe('playing');
   });
 
-  it('checkStuckState returns true when staging is full and no legal commits exist', () => {
+  it('checkStuckState returns false when any staged item can still complete a group', () => {
     const medA = makeItem('med-a', 'medical', 'vial' as ItemVariant<'medical'>);
     const medB = makeItem('med-b', 'medical', 'syringe' as ItemVariant<'medical'>);
     const state = makeBoardState({
@@ -272,7 +277,7 @@ describe('engine board mechanics', () => {
       stagingCapacity: 2,
     });
 
-    expect(checkStuckState(state)).toBe(true);
+    expect(checkStuckState(state)).toBe(false);
   });
 
   it('checkStuckState returns false when at least one legal commit exists', () => {

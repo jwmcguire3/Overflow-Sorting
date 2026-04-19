@@ -36,12 +36,12 @@ const incrementMovesAndApplyBudget = (
 };
 
 const hasMatchingVariants = (items: ReadonlyArray<Item>): boolean => {
-  if (items.length === 0) {
+  const [firstItem, ...remainingItems] = items;
+  if (!firstItem) {
     return true;
   }
 
-  const variant = items[0].variant;
-  return items.every((item) => item.variant === variant);
+  return remainingItems.every((item) => item.variant === firstItem.variant);
 };
 
 export const createInitialBoard = (config: BoardConfig): BoardState => {
@@ -92,6 +92,10 @@ export const pullItem = (
   }
 
   const sourceBin = state.sourceBins[sourceBinIndex];
+  if (!sourceBin) {
+    return createMoveResult(state, false, 'source bin not found');
+  }
+
   const topLayer = sourceBin.layers[0];
 
   if (!topLayer || topLayer.length === 0) {
@@ -109,6 +113,10 @@ export const pullItem = (
   }
 
   const pulledItem = topLayer[itemIndex];
+  if (!pulledItem) {
+    return createMoveResult(state, false, 'item is not in the top layer');
+  }
+
   const nextTopLayer = topLayer.filter((item) => item.id !== itemId);
   const nextLayers =
     nextTopLayer.length > 0
@@ -124,13 +132,14 @@ export const pullItem = (
       : bin,
   );
 
-  const nextStagingSlots = state.stagingSlots.map((slot, index) =>
-    index === stagingIndex
-      ? {
-          ...slot,
-          item: pulledItem,
-        }
-      : slot,
+  const nextStagingSlots: ReadonlyArray<StagingSlot> = state.stagingSlots.map(
+    (slot, index) =>
+      index === stagingIndex
+        ? {
+            ...slot,
+            item: pulledItem,
+          }
+        : slot,
   );
 
   const nextState = incrementMovesAndApplyBudget(state, {
@@ -165,7 +174,12 @@ export const commitItem = (
     return createMoveResult(state, false, 'item is not in staging');
   }
 
-  const item = state.stagingSlots[stagingIndex].item;
+  const stagingSlot = state.stagingSlots[stagingIndex];
+  if (!stagingSlot) {
+    return createMoveResult(state, false, 'item is not in staging');
+  }
+
+  const item = stagingSlot.item;
   if (!item) {
     return createMoveResult(state, false, 'item is not in staging');
   }
@@ -178,6 +192,10 @@ export const commitItem = (
   }
 
   const destinationBin = state.destinationBins[destinationBinIndex];
+  if (!destinationBin) {
+    return createMoveResult(state, false, 'destination bin not found');
+  }
+
   if (destinationBin.accepts !== item.category) {
     return createMoveResult(state, false, 'wrong category');
   }
@@ -221,7 +239,7 @@ export const commitItem = (
     stagingSlots: nextStagingSlots,
   });
 
-  const nextState =
+  const nextState: BoardState =
     postMoveState.status === 'lost' || !checkWinCondition(postMoveState)
       ? postMoveState
       : {

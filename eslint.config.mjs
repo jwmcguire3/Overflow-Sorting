@@ -7,10 +7,20 @@ export default tseslint.config(
   {
     ignores: ['node_modules', 'dist', '.expo', '.expo-shared'],
   },
-  js.configs.recommended,
-  ...tseslint.configs.strictTypeChecked,
+  {
+    files: ['**/*.{js,mjs,cjs}'],
+    ...js.configs.recommended,
+    languageOptions: {
+      globals: {
+        __dirname: 'readonly',
+        module: 'readonly',
+        require: 'readonly',
+      },
+    },
+  },
   {
     files: ['**/*.{ts,tsx}'],
+    extends: [js.configs.recommended, ...tseslint.configs.strictTypeChecked],
     languageOptions: {
       parserOptions: {
         projectService: true,
