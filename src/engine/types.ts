@@ -49,6 +49,20 @@ export type Item = {
   readonly [TCategory in ItemCategory]: ItemByCategory<TCategory>;
 }[ItemCategory];
 
+
+export interface BoardConfig {
+  readonly stagingCapacity: number;
+  readonly sourceBins: ReadonlyArray<{
+    readonly id: string;
+    readonly layers: ReadonlyArray<ReadonlyArray<Item>>;
+  }>;
+  readonly destinationBins: ReadonlyArray<{
+    readonly id: string;
+    readonly accepts: ItemCategory;
+  }>;
+  readonly moveBudget: number | null;
+}
+
 export interface SourceBin {
   readonly id: string;
   readonly layers: ReadonlyArray<ReadonlyArray<Item>>;
