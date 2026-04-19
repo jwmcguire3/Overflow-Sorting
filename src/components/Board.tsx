@@ -116,18 +116,23 @@ type DestinationHighlightState =
   | 'reject';
 
 const BACKGROUND_COLOR = '#F5F1E8';
-const PANEL_COLOR = '#E6DFD2';
 const PANEL_STROKE = '#6F675C';
-const EMPTY_SLOT_COLOR = '#FFFFFF';
+const SURFACE_FILL = '#F8F4EC';
+const SURFACE_STROKE = '#D3C6B5';
+const ZONE_FILL = '#F2EBDF';
+const SOURCE_FILL = '#EFE7DA';
+const DESTINATION_FILL = '#F7F2E8';
+const EMPTY_SLOT_COLOR = '#FCFAF6';
 const LABEL_COLOR = '#2F2A24';
+const MUTED_LABEL_COLOR = '#655E55';
 const FLASH_COLOR = '#E05151';
 const VALID_HIGHLIGHT_FILL = '#E9F1E7';
 const VALID_HIGHLIGHT_STROKE = '#5A8661';
 const INVALID_HIGHLIGHT_FILL = '#F8D9D6';
 const LOCKED_FILL = '#F2ECE2';
-const SOURCE_FONT = matchFont({
+const SECTION_FONT = matchFont({
   fontFamily: 'Arial',
-  fontSize: 16,
+  fontSize: 13,
   fontStyle: 'normal',
   fontWeight: 'bold',
 });
@@ -149,12 +154,15 @@ const COMPLETE_HIGHLIGHT_FILL = '#DCE8D5';
 const COMPLETE_HIGHLIGHT_STROKE = '#3F5F4A';
 const TOKEN_GLYPH_COLOR = '#FFF7E6';
 
+const withAlpha = (hexColor: string, alpha: string) =>
+  hexColor.startsWith('#') && hexColor.length === 7 ? `${hexColor}${alpha}` : hexColor;
+
 const getFrameCenter = (frame: Frame) => ({
   x: frame.x + frame.width / 2,
   y: frame.y + frame.height * 0.62,
 });
 
-const getStagingItemRadius = (frame: Frame) => Math.min(22, frame.width / 5);
+const getStagingItemRadius = (frame: Frame) => Math.min(26, frame.width / 4.2, frame.height / 4.6);
 
 type OverlayAction = {
   readonly label: string;
@@ -286,12 +294,16 @@ const renderSourceBin = (
 ) => {
   const topLayer = getTopLayer(bin);
   const topItem = topLayer[0] ?? null;
-  const fillColor = isFlashing
-    ? FLASH_COLOR
-    : topItem
-      ? getCategoryColor(topItem.category)
-      : PANEL_COLOR;
-  const itemPositions = getItemCirclePositions(frame, topLayer.length);
+  const accentColor = topItem ? getCategoryColor(topItem.category) : PANEL_STROKE;
+  const fillColor = isFlashing ? INVALID_HIGHLIGHT_FILL : SOURCE_FILL;
+  const strokeColor = isFlashing ? FLASH_COLOR : withAlpha(accentColor, '88');
+  const itemFrame = {
+    x: frame.x + 12,
+    y: frame.y + 48,
+    width: frame.width - 24,
+    height: frame.height - 60,
+  };
+  const itemPositions = getItemCirclePositions(itemFrame, topLayer.length);
 
   return (
     <Group key={bin.id}>
@@ -303,19 +315,45 @@ const renderSourceBin = (
         r={18}
         color={fillColor}
       />
-      <SkiaText
+      <RoundedRect
+        x={frame.x}
+        y={frame.y}
+        width={frame.width}
+        height={frame.height}
+        r={18}
+        color={strokeColor}
+        style="stroke"
+        strokeWidth={3}
+      />
+      <RoundedRect
         x={frame.x + 12}
-        y={frame.y + 24}
+        y={frame.y + 12}
+        width={Math.min(frame.width - 24, 72)}
+        height={8}
+        r={4}
+        color={withAlpha(accentColor, '55')}
+      />
+      <RoundedRect
+        x={itemFrame.x}
+        y={itemFrame.y}
+        width={itemFrame.width}
+        height={itemFrame.height}
+        r={14}
+        color={EMPTY_SLOT_COLOR}
+      />
+      <SkiaText
+        x={frame.x + 14}
+        y={frame.y + 28}
         text={bin.id.toUpperCase()}
-        font={SOURCE_FONT}
+        font={SECTION_FONT}
         color={LABEL_COLOR}
       />
       <SkiaText
-        x={frame.x + 12}
-        y={frame.y + 44}
+        x={frame.x + 14}
+        y={frame.y + 46}
         text={'Top ' + String(topLayer.length)}
         font={BODY_FONT}
-        color={LABEL_COLOR}
+        color={MUTED_LABEL_COLOR}
       />
       {topLayer.map((item, index) => {
         const position = itemPositions[index];
@@ -341,9 +379,9 @@ const renderStagingSlot = (
   const borderColor = isFlashing
     ? FLASH_COLOR
     : isSelected
-      ? '#1E1E1E'
-      : PANEL_STROKE;
-  const borderWidth = isSelected ? 5 : 3;
+      ? '#2F4938'
+      : '#8D8477';
+  const borderWidth = isSelected ? 4 : 2.5;
   const item = hideItem ? null : slot.item;
 
   return (
@@ -357,6 +395,14 @@ const renderStagingSlot = (
         color={EMPTY_SLOT_COLOR}
       />
       <RoundedRect
+        x={frame.x + 10}
+        y={frame.y + 10}
+        width={frame.width - 20}
+        height={frame.height - 20}
+        r={15}
+        color={withAlpha('#D8CFBF', '28')}
+      />
+      <RoundedRect
         x={frame.x}
         y={frame.y}
         width={frame.width}
@@ -368,17 +414,17 @@ const renderStagingSlot = (
       />
       <SkiaText
         x={frame.x + 12}
-        y={frame.y + 24}
+        y={frame.y + 22}
         text={'SLOT ' + String(slot.index + 1)}
         font={BODY_FONT}
-        color={LABEL_COLOR}
+        color={MUTED_LABEL_COLOR}
       />
       {item ? (
         renderToken(
           item,
           frame.x + frame.width / 2,
-          frame.y + frame.height * 0.62,
-          Math.min(22, frame.width / 5),
+          frame.y + frame.height * 0.64,
+          getStagingItemRadius(frame),
           `staging-item-${String(slot.index)}`,
         )
       ) : null}
@@ -393,7 +439,8 @@ const renderDestinationBin = (
 ) => {
   const lockItem = getDestinationBinLockItem(bin);
   const isLocked = lockItem !== null;
-  const lockedStrokeColor = lockItem ? getCategoryColor(lockItem.category) : PANEL_STROKE;
+  const accentColor = getCategoryColor(bin.accepts);
+  const lockedStrokeColor = lockItem ? accentColor : accentColor;
   const fillColor =
     highlightState === 'flash'
       ? FLASH_COLOR
@@ -409,7 +456,7 @@ const renderDestinationBin = (
                 ? INVALID_HIGHLIGHT_FILL
                 : isLocked
                   ? LOCKED_FILL
-                  : PANEL_COLOR;
+                  : DESTINATION_FILL;
   const strokeColor =
     highlightState === 'complete'
       ? COMPLETE_HIGHLIGHT_STROKE
@@ -420,8 +467,14 @@ const renderDestinationBin = (
             highlightState === 'flash'
           ? FLASH_COLOR
           : lockedStrokeColor;
-  const strokeWidth = highlightState === 'none' ? (isLocked ? 4 : 3) : 5;
-  const itemPositions = getItemCirclePositions(frame, isLocked ? 3 : bin.contents.length);
+  const strokeWidth = highlightState === 'none' ? 4 : 5;
+  const itemFrame = {
+    x: frame.x + 12,
+    y: frame.y + 64,
+    width: frame.width - 24,
+    height: frame.height - 76,
+  };
+  const itemPositions = getItemCirclePositions(itemFrame, isLocked ? 3 : bin.contents.length);
 
   return (
     <Group key={bin.id}>
@@ -434,6 +487,14 @@ const renderDestinationBin = (
         color={fillColor}
       />
       <RoundedRect
+        x={frame.x + 8}
+        y={frame.y + 10}
+        width={frame.width - 16}
+        height={16}
+        r={8}
+        color={withAlpha(accentColor, '2D')}
+      />
+      <RoundedRect
         x={frame.x}
         y={frame.y}
         width={frame.width}
@@ -443,26 +504,49 @@ const renderDestinationBin = (
         style="stroke"
         strokeWidth={strokeWidth}
       />
+      <RoundedRect
+        x={itemFrame.x}
+        y={itemFrame.y}
+        width={itemFrame.width}
+        height={itemFrame.height}
+        r={14}
+        color={withAlpha(accentColor, isLocked ? '16' : '10')}
+      />
+      <RoundedRect
+        x={frame.x + frame.width - 62}
+        y={frame.y + 14}
+        width={48}
+        height={24}
+        r={12}
+        color={accentColor}
+      />
       <SkiaText
-        x={frame.x + 12}
-        y={frame.y + 24}
+        x={frame.x + 14}
+        y={frame.y + 30}
         text={bin.accepts.toUpperCase()}
-        font={SOURCE_FONT}
+        font={SECTION_FONT}
         color={LABEL_COLOR}
       />
       <SkiaText
-        x={frame.x + 12}
-        y={frame.y + 44}
+        x={frame.x + frame.width - 48}
+        y={frame.y + 31}
+        text={String(bin.contents.length) + '/3'}
+        font={BODY_FONT}
+        color="#FFFFFF"
+      />
+      <SkiaText
+        x={frame.x + 14}
+        y={frame.y + 50}
         text={isLocked ? 'LOCKED' : 'OPEN'}
         font={BODY_FONT}
-        color={LABEL_COLOR}
+        color={MUTED_LABEL_COLOR}
       />
       <SkiaText
-        x={frame.x + 12}
-        y={frame.y + 62}
-        text={String(bin.contents.length) + '/3  Cleared ' + String(bin.completedGroups)}
+        x={frame.x + 68}
+        y={frame.y + 50}
+        text={'Cleared ' + String(bin.completedGroups)}
         font={BODY_FONT}
-        color={LABEL_COLOR}
+        color={MUTED_LABEL_COLOR}
       />
       {bin.contents.map((item, index) => {
         const position = itemPositions[index];
@@ -494,7 +578,7 @@ const renderDestinationBin = (
                 position.x,
                 position.y,
                 position.radius * 1.12,
-                getCategoryColor(lockItem.category),
+                accentColor,
                 `${bin.id}-ghost-${String(index)}-glyph`,
               )}
             </Group>
@@ -1494,41 +1578,68 @@ export function Board({
                 height={layout.canvasHeight}
                 color={BACKGROUND_COLOR}
               />
-              <Rect
-                x={0}
-                y={0}
-                width={layout.canvasWidth}
-                height={layout.canvasHeight * 0.25}
-                color="#EDE5D7"
+              <RoundedRect
+                x={layout.surfaceFrame.x}
+                y={layout.surfaceFrame.y}
+                width={layout.surfaceFrame.width}
+                height={layout.surfaceFrame.height}
+                r={26}
+                color={SURFACE_FILL}
               />
-              <Rect
-                x={0}
-                y={layout.canvasHeight * 0.25}
-                width={layout.canvasWidth}
-                height={layout.canvasHeight * 0.4}
-                color="#F8F5EE"
+              <RoundedRect
+                x={layout.surfaceFrame.x}
+                y={layout.surfaceFrame.y}
+                width={layout.surfaceFrame.width}
+                height={layout.surfaceFrame.height}
+                r={26}
+                color={SURFACE_STROKE}
+                style="stroke"
+                strokeWidth={2}
               />
-              <Rect
-                x={0}
-                y={layout.canvasHeight * 0.75}
-                width={layout.canvasWidth}
-                height={layout.canvasHeight * 0.25}
-                color="#EDE5D7"
+              <RoundedRect
+                x={layout.sourceZoneFrame.x - 4}
+                y={layout.sourceZoneFrame.y + 2}
+                width={layout.sourceZoneFrame.width + 8}
+                height={layout.sourceZoneFrame.height - 4}
+                r={22}
+                color={ZONE_FILL}
               />
-              <SkiaText x={16} y={20} text="Sources" font={SOURCE_FONT} color={LABEL_COLOR} />
+              <RoundedRect
+                x={layout.stagingZoneFrame.x - 4}
+                y={layout.stagingZoneFrame.y + 2}
+                width={layout.stagingZoneFrame.width + 8}
+                height={layout.stagingZoneFrame.height - 4}
+                r={22}
+                color={EMPTY_SLOT_COLOR}
+              />
+              <RoundedRect
+                x={layout.destinationZoneFrame.x - 4}
+                y={layout.destinationZoneFrame.y + 2}
+                width={layout.destinationZoneFrame.width + 8}
+                height={layout.destinationZoneFrame.height - 4}
+                r={22}
+                color={ZONE_FILL}
+              />
               <SkiaText
-                x={16}
-                y={layout.canvasHeight * 0.25 + 20}
+                x={layout.sourceZoneFrame.x + 2}
+                y={layout.sourceZoneFrame.y + 16}
+                text="Sources"
+                font={SECTION_FONT}
+                color={MUTED_LABEL_COLOR}
+              />
+              <SkiaText
+                x={layout.stagingZoneFrame.x + 2}
+                y={layout.stagingZoneFrame.y + 16}
                 text="Staging"
-                font={SOURCE_FONT}
-                color={LABEL_COLOR}
+                font={SECTION_FONT}
+                color={MUTED_LABEL_COLOR}
               />
               <SkiaText
-                x={16}
-                y={layout.canvasHeight * 0.75 + 20}
+                x={layout.destinationZoneFrame.x + 2}
+                y={layout.destinationZoneFrame.y + 16}
                 text="Destinations"
-                font={SOURCE_FONT}
-                color={LABEL_COLOR}
+                font={SECTION_FONT}
+                color={MUTED_LABEL_COLOR}
               />
               {sourceBins.map((bin, index) => {
                 const frame = layout.sourceFrames[index];

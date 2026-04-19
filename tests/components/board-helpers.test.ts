@@ -3,12 +3,20 @@ import { describe, expect, it } from 'vitest';
 import {
   findFrameIndexAtPoint,
   frameContainsPoint,
+  getBoardLayout,
   getDestinationBinLockItem,
   getVariantGlyphSpec,
   type Frame,
 } from '../../src/components/board-helpers';
 import { createItemId } from '../../src/engine';
-import type { DestinationBin, Item, ItemCategory, ItemVariant } from '../../src/engine';
+import type {
+  DestinationBin,
+  Item,
+  ItemCategory,
+  ItemVariant,
+  SourceBin,
+  StagingSlot,
+} from '../../src/engine';
 
 type ItemForCategory<TCategory extends ItemCategory> = Extract<
   Item,
@@ -64,6 +72,26 @@ describe('board helpers', () => {
     expect(getDestinationBinLockItem(makeDestinationBin([]))).toBeNull();
     expect(getDestinationBinLockItem(makeDestinationBin([first]))?.id).toBe(first.id);
     expect(getDestinationBinLockItem(makeDestinationBin([first, second]))?.id).toBe(first.id);
+  });
+
+  it('wraps five staging slots into two rows on narrow phone widths', () => {
+    const stagingSlots: ReadonlyArray<StagingSlot> = Array.from({ length: 5 }, (_, index) => ({
+      index,
+      item: null,
+    }));
+    const layout = getBoardLayout(
+      360,
+      640,
+      [] as ReadonlyArray<SourceBin>,
+      stagingSlots,
+      [] as ReadonlyArray<DestinationBin>,
+    );
+
+    expect(layout.stagingFrames).toHaveLength(5);
+    expect(layout.stagingFrames[0]?.y).toBe(layout.stagingFrames[2]?.y);
+    expect(layout.stagingFrames[3]?.y).toBe(layout.stagingFrames[4]?.y);
+    expect(layout.stagingFrames[3]?.y).toBeGreaterThan(layout.stagingFrames[0]?.y ?? 0);
+    expect(layout.stagingFrames[0]?.width).toBeLessThan(110);
   });
 
   it('provides a distinct non-empty glyph spec for every placeholder variant', () => {

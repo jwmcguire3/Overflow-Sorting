@@ -15,6 +15,10 @@ export type Point = {
 export type BoardLayout = {
   readonly canvasWidth: number;
   readonly canvasHeight: number;
+  readonly surfaceFrame: Frame;
+  readonly sourceZoneFrame: Frame;
+  readonly stagingZoneFrame: Frame;
+  readonly destinationZoneFrame: Frame;
   readonly sourceFrames: ReadonlyArray<Frame>;
   readonly stagingFrames: ReadonlyArray<Frame>;
   readonly destinationFrames: ReadonlyArray<Frame>;
@@ -73,28 +77,33 @@ const CATEGORY_COLORS: Record<ItemCategory, string> = {
 export const getCategoryColor = (category: ItemCategory): string =>
   CATEGORY_COLORS[category];
 
+const SURFACE_HORIZONTAL_INSET = 14;
+const SURFACE_VERTICAL_INSET = 10;
+const SURFACE_CONTENT_PADDING = 12;
+const SECTION_GAP = 12;
+const SECTION_LABEL_HEIGHT = 22;
+const SECTION_LABEL_GAP = 8;
+
 const getSectionFrames = (
   count: number,
-  sectionY: number,
-  sectionHeight: number,
-  width: number,
+  area: Frame,
 ): ReadonlyArray<Frame> => {
   if (count === 0) {
     return [];
   }
 
-  const horizontalPadding = 16;
-  const gap = 12;
-  const usableWidth = width - horizontalPadding * 2;
+  const horizontalPadding = 4;
+  const gap = 10;
+  const usableWidth = area.width - horizontalPadding * 2;
   const itemWidth = Math.max(
     72,
     (usableWidth - gap * Math.max(0, count - 1)) / count,
   );
   const actualWidth =
     itemWidth * count + gap * Math.max(0, count - 1) + horizontalPadding * 2;
-  const startX = (width - actualWidth) / 2 + horizontalPadding;
-  const frameHeight = Math.max(88, sectionHeight - 24);
-  const y = sectionY + (sectionHeight - frameHeight) / 2;
+  const startX = area.x + (area.width - actualWidth) / 2 + horizontalPadding;
+  const frameHeight = Math.max(88, area.height);
+  const y = area.y + (area.height - frameHeight) / 2;
 
   return Array.from({ length: count }, (_, index) => ({
     x: startX + index * (itemWidth + gap),
@@ -106,35 +115,50 @@ const getSectionFrames = (
 
 const getStagingFrames = (
   capacity: number,
-  sectionY: number,
-  sectionHeight: number,
+  area: Frame,
   width: number,
 ): ReadonlyArray<Frame> => {
   if (capacity === 0) {
     return [];
   }
 
-  const itemsPerRow = capacity > 5 ? Math.ceil(capacity / 2) : capacity;
-  const rowCount = capacity > 5 ? 2 : 1;
-  const rowGap = 12;
-  const rowHeight =
-    (sectionHeight - rowGap * Math.max(0, rowCount - 1) - 24) / rowCount;
+  const maxColumnsPerRow = width <= 420 ? 3 : 4;
+  const rowCount = capacity <= maxColumnsPerRow ? 1 : Math.ceil(capacity / maxColumnsPerRow);
+  const rowGap = 10;
+  const totalRowGap = rowGap * Math.max(0, rowCount - 1);
+  const rowHeight = (area.height - totalRowGap) / rowCount;
+  const baseItemsPerRow = Math.floor(capacity / rowCount);
+  const extraItems = capacity % rowCount;
+  const rowItemCounts = Array.from({ length: rowCount }, (_, row) =>
+    baseItemsPerRow + (row < extraItems ? 1 : 0),
+  );
 
   return Array.from({ length: capacity }, (_, index) => {
-    const row = capacity > 5 ? Math.floor(index / itemsPerRow) : 0;
-    const col = capacity > 5 ? index % itemsPerRow : index;
-    const itemsInThisRow =
-      capacity > 5 && row === rowCount - 1
-        ? capacity - itemsPerRow * (rowCount - 1)
-        : itemsPerRow;
+    let itemIndex = index;
+    let row = 0;
+
+    while (row < rowItemCounts.length) {
+      const itemsInRow = rowItemCounts[row] ?? 0;
+      if (itemIndex < itemsInRow) {
+        break;
+      }
+
+      itemIndex -= itemsInRow;
+      row += 1;
+    }
+
+    const itemsInThisRow = rowItemCounts[row] ?? rowItemCounts[rowItemCounts.length - 1] ?? 1;
     const frames = getSectionFrames(
       itemsInThisRow,
-      sectionY + row * (rowHeight + rowGap),
-      rowHeight + 24,
-      width,
+      {
+        x: area.x,
+        y: area.y + row * (rowHeight + rowGap),
+        width: area.width,
+        height: rowHeight,
+      },
     );
 
-    return frames[col] as Frame;
+    return frames[itemIndex] as Frame;
   });
 };
 
@@ -147,26 +171,75 @@ export const getBoardLayout = (
 ): BoardLayout => {
   const canvasWidth = Math.max(320, width);
   const canvasHeight = Math.max(480, height);
-  const sourceHeight = canvasHeight * 0.25;
-  const stagingHeight = canvasHeight * 0.4;
-  const destinationHeight = canvasHeight * 0.25;
+  const surfaceFrame: Frame = {
+    x: SURFACE_HORIZONTAL_INSET,
+    y: SURFACE_VERTICAL_INSET,
+    width: canvasWidth - SURFACE_HORIZONTAL_INSET * 2,
+    height: canvasHeight - SURFACE_VERTICAL_INSET * 2,
+  };
+  const innerX = surfaceFrame.x + SURFACE_CONTENT_PADDING;
+  const innerWidth = surfaceFrame.width - SURFACE_CONTENT_PADDING * 2;
+  const sectionWidth = innerWidth;
+  const labelAndGap = SECTION_LABEL_HEIGHT + SECTION_LABEL_GAP;
+  const contentHeight =
+    surfaceFrame.height -
+    SURFACE_CONTENT_PADDING * 2 -
+    SECTION_GAP * 2 -
+    labelAndGap * 3;
+  const sourceContentHeight = Math.max(88, contentHeight * 0.2);
+  const stagingContentHeight = Math.max(184, contentHeight * 0.39);
+  const destinationContentHeight = Math.max(
+    110,
+    contentHeight - sourceContentHeight - stagingContentHeight,
+  );
+
+  const sourceZoneFrame: Frame = {
+    x: innerX,
+    y: surfaceFrame.y + SURFACE_CONTENT_PADDING,
+    width: sectionWidth,
+    height: labelAndGap + sourceContentHeight,
+  };
+  const stagingZoneFrame: Frame = {
+    x: innerX,
+    y: sourceZoneFrame.y + sourceZoneFrame.height + SECTION_GAP,
+    width: sectionWidth,
+    height: labelAndGap + stagingContentHeight,
+  };
+  const destinationZoneFrame: Frame = {
+    x: innerX,
+    y: stagingZoneFrame.y + stagingZoneFrame.height + SECTION_GAP,
+    width: sectionWidth,
+    height: labelAndGap + destinationContentHeight,
+  };
+  const sourceContentFrame: Frame = {
+    x: sourceZoneFrame.x,
+    y: sourceZoneFrame.y + labelAndGap,
+    width: sourceZoneFrame.width,
+    height: sourceContentHeight,
+  };
+  const stagingContentFrame: Frame = {
+    x: stagingZoneFrame.x,
+    y: stagingZoneFrame.y + labelAndGap,
+    width: stagingZoneFrame.width,
+    height: stagingContentHeight,
+  };
+  const destinationContentFrame: Frame = {
+    x: destinationZoneFrame.x,
+    y: destinationZoneFrame.y + labelAndGap,
+    width: destinationZoneFrame.width,
+    height: destinationContentHeight,
+  };
 
   return {
     canvasWidth,
     canvasHeight,
-    sourceFrames: getSectionFrames(sourceBins.length, 0, sourceHeight, canvasWidth),
-    stagingFrames: getStagingFrames(
-      stagingSlots.length,
-      sourceHeight,
-      stagingHeight,
-      canvasWidth,
-    ),
-    destinationFrames: getSectionFrames(
-      destinationBins.length,
-      canvasHeight - destinationHeight,
-      destinationHeight,
-      canvasWidth,
-    ),
+    surfaceFrame,
+    sourceZoneFrame,
+    stagingZoneFrame,
+    destinationZoneFrame,
+    sourceFrames: getSectionFrames(sourceBins.length, sourceContentFrame),
+    stagingFrames: getStagingFrames(stagingSlots.length, stagingContentFrame, canvasWidth),
+    destinationFrames: getSectionFrames(destinationBins.length, destinationContentFrame),
   };
 };
 
@@ -546,11 +619,15 @@ export const getItemCirclePositions = (
   }
 
   const maxDisplayed = Math.min(count, 5);
-  const radius = Math.min(18, frame.width / 8, frame.height / 5);
-  const gap = radius * 0.6;
+  const radius = Math.min(
+    24,
+    frame.width / (maxDisplayed > 3 ? 7 : 5.8),
+    frame.height / 4.8,
+  );
+  const gap = radius * 0.42;
   const totalWidth = maxDisplayed * radius * 2 + (maxDisplayed - 1) * gap;
   const startX = frame.x + (frame.width - totalWidth) / 2 + radius;
-  const y = frame.y + frame.height * 0.62;
+  const y = frame.y + frame.height * 0.68;
 
   return Array.from({ length: maxDisplayed }, (_, index) => ({
     x: startX + index * (radius * 2 + gap),
