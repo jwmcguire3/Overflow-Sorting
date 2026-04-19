@@ -25,6 +25,18 @@ const createMoveResult = (
 const pushHistory = (history: ReadonlyArray<BoardState>, snapshot: BoardState) =>
   [...history, snapshot].slice(-MAX_HISTORY_ENTRIES);
 
+const resolveBoardStatus = (state: BoardState): BoardState['status'] => {
+  if (state.status === 'lost') {
+    return 'lost';
+  }
+
+  if (checkWinCondition(state)) {
+    return 'won';
+  }
+
+  return isHardStuck(state) ? 'stuck' : 'playing';
+};
+
 const incrementMovesAndApplyBudget = (
   state: BoardState,
   baseState: Omit<BoardState, 'movesUsed' | 'status'>,
@@ -246,14 +258,10 @@ export const commitItem = (
     stagingSlots: nextStagingSlots,
     history: pushHistory(state.history, state),
   });
-
-  const nextState: BoardState =
-    postMoveState.status === 'lost' || !checkWinCondition(postMoveState)
-      ? postMoveState
-      : {
-          ...postMoveState,
-          status: 'won',
-        };
+  const nextState: BoardState = {
+    ...postMoveState,
+    status: resolveBoardStatus(postMoveState),
+  };
 
   return createMoveResult(nextState, true, null);
 };
@@ -311,14 +319,25 @@ export const checkStuckState = (state: BoardState): boolean => {
   return !hasAnyLegalCommit;
 };
 
+export const isHardStuck = (state: BoardState): boolean => checkStuckState(state);
+
 export const applyMove = (state: BoardState, move: Move): MoveResult => {
-  if (move.type === 'pull') {
-    return pullItem(state, move.sourceBinId, move.itemId);
+  const result =
+    move.type === 'pull'
+      ? pullItem(state, move.sourceBinId, move.itemId)
+      : move.type === 'commit'
+        ? commitItem(state, move.itemId, move.destBinId)
+        : undoMove(state);
+
+  if (!result.success || move.type === 'undo') {
+    return result;
   }
 
-  if (move.type === 'commit') {
-    return commitItem(state, move.itemId, move.destBinId);
-  }
-
-  return undoMove(state);
+  return {
+    ...result,
+    nextState: {
+      ...result.nextState,
+      status: resolveBoardStatus(result.nextState),
+    },
+  };
 };

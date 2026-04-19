@@ -7,6 +7,7 @@ import {
   commitItem,
   createInitialBoard,
   createItemId,
+  isHardStuck,
   pullItem,
   undoMove,
 } from '../../src/engine';
@@ -307,6 +308,31 @@ describe('engine board mechanics', () => {
     expect(checkStuckState(state)).toBe(false);
   });
 
+  it('isHardStuck returns true when staging is full and no legal commits remain', () => {
+    const blockedMedical = makeItem(
+      'med-blocked',
+      'medical',
+      'vial' as ItemVariant<'medical'>,
+    );
+    const blockedIndustrial = makeItem(
+      'ind-blocked',
+      'industrial',
+      'gear' as ItemVariant<'industrial'>,
+    );
+    const state = makeBoardState({
+      destinationBins: [
+        makeDestinationBin('dest-med', 'medical', [
+          makeItem('med-1', 'medical', 'syringe' as ItemVariant<'medical'>),
+          makeItem('med-2', 'medical', 'syringe' as ItemVariant<'medical'>),
+        ]),
+      ],
+      stagingSlots: makeStagingSlots([blockedMedical, blockedIndustrial]),
+      stagingCapacity: 2,
+    });
+
+    expect(isHardStuck(state)).toBe(true);
+  });
+
   it('applyMove dispatches pull, commit, and undo', () => {
     const item = makeItem('med-a', 'medical', 'syringe' as ItemVariant<'medical'>);
     const pullState = makeBoardState({
@@ -378,6 +404,39 @@ describe('engine board mechanics', () => {
     expect(result.success).toBe(true);
     expect(result.nextState.status).toBe('lost');
     expect(result.nextState.movesUsed).toBe(3);
+  });
+
+  it('applyMove sets status to stuck when a successful move creates a hard-stuck board', () => {
+    const blockedMedical = makeItem(
+      'med-blocked',
+      'medical',
+      'vial' as ItemVariant<'medical'>,
+    );
+    const pulledIndustrial = makeItem(
+      'ind-pulled',
+      'industrial',
+      'gear' as ItemVariant<'industrial'>,
+    );
+    const state = makeBoardState({
+      sourceBins: [makeSourceBin('source-a', [[pulledIndustrial]])],
+      destinationBins: [
+        makeDestinationBin('dest-med', 'medical', [
+          makeItem('med-1', 'medical', 'syringe' as ItemVariant<'medical'>),
+          makeItem('med-2', 'medical', 'syringe' as ItemVariant<'medical'>),
+        ]),
+      ],
+      stagingSlots: makeStagingSlots([blockedMedical, null]),
+      stagingCapacity: 2,
+    });
+
+    const result = applyMove(state, {
+      type: 'pull',
+      sourceBinId: 'source-a',
+      itemId: pulledIndustrial.id,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.nextState.status).toBe('stuck');
   });
 
   it('pull chooses the lowest-index empty staging slot', () => {
@@ -501,6 +560,49 @@ describe('engine board mechanics', () => {
     expect(result.success).toBe(true);
     expect(result.nextState.movesUsed).toBe(1);
     expect(result.nextState.status).toBe('lost');
+  });
+
+  it('undo from stuck returns the board to playing', () => {
+    const blockedMedical = makeItem(
+      'med-blocked',
+      'medical',
+      'vial' as ItemVariant<'medical'>,
+    );
+    const previousState = makeBoardState({
+      sourceBins: [
+        makeSourceBin('source-a', [
+          [makeItem('ind-pulled', 'industrial', 'gear' as ItemVariant<'industrial'>)],
+        ]),
+      ],
+      destinationBins: [
+        makeDestinationBin('dest-med', 'medical', [
+          makeItem('med-1', 'medical', 'syringe' as ItemVariant<'medical'>),
+          makeItem('med-2', 'medical', 'syringe' as ItemVariant<'medical'>),
+        ]),
+      ],
+      stagingSlots: makeStagingSlots([blockedMedical, null]),
+      stagingCapacity: 2,
+      movesUsed: 0,
+      status: 'playing',
+    });
+    const currentState = makeBoardState({
+      sourceBins: [makeSourceBin('source-a', [])],
+      destinationBins: previousState.destinationBins,
+      stagingSlots: makeStagingSlots([
+        blockedMedical,
+        makeItem('ind-pulled', 'industrial', 'gear' as ItemVariant<'industrial'>),
+      ]),
+      stagingCapacity: 2,
+      history: [previousState],
+      movesUsed: 1,
+      status: 'stuck',
+    });
+
+    const result = undoMove(currentState);
+
+    expect(result.success).toBe(true);
+    expect(result.nextState.status).toBe('playing');
+    expect(result.nextState.stagingSlots[1]?.item).toBeNull();
   });
 
   it('successful moves cap history at 20 entries', () => {

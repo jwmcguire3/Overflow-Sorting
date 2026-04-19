@@ -13,9 +13,12 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 
 import type { DestinationBin, ItemId, SourceBin, StagingSlot } from '../engine';
+import { TEST_LEVEL_CONFIG } from '../data/levels';
 import {
   useDestinationBins,
+  useGameStatus,
   useGameStore,
+  useMoveInfo,
   useSourceBins,
   useStagingSlots,
 } from '../state';
@@ -58,6 +61,14 @@ const ITEM_FONT = matchFont({
   fontStyle: 'normal',
   fontWeight: 'bold',
 });
+const WARNING_COLOR = '#C78A11';
+const DANGER_COLOR = '#B5412C';
+
+type OverlayAction = {
+  readonly label: string;
+  readonly onPress: () => void;
+  readonly variant?: 'primary' | 'secondary';
+};
 
 const frameStyle = (frame: Frame) => ({
   position: 'absolute' as const,
@@ -262,12 +273,73 @@ const renderDestinationBin = (
   );
 };
 
+const getMoveCounterColor = (used: number, budget: number | null) => {
+  if (budget === null) {
+    return LABEL_COLOR;
+  }
+
+  if (used >= budget) {
+    return DANGER_COLOR;
+  }
+
+  if (budget - used <= 5) {
+    return WARNING_COLOR;
+  }
+
+  return LABEL_COLOR;
+};
+
+const StatusOverlay = ({
+  title,
+  actions,
+}: {
+  readonly title: string;
+  readonly actions: ReadonlyArray<OverlayAction>;
+}) => (
+  <View style={styles.overlay}>
+    <View style={styles.overlayCard}>
+      <Text style={styles.overlayTitle}>{title}</Text>
+      <View style={styles.overlayActions}>
+        {actions.map((action) => (
+          <Pressable
+            key={action.label}
+            accessibilityLabel={action.label}
+            onPress={action.onPress}
+            style={({ pressed }) => [
+              styles.overlayButton,
+              action.variant === 'secondary'
+                ? styles.overlayButtonSecondary
+                : styles.overlayButtonPrimary,
+              pressed ? styles.overlayButtonPressed : null,
+            ]}
+          >
+            <Text
+              style={[
+                styles.overlayButtonText,
+                action.variant === 'secondary'
+                  ? styles.overlayButtonTextSecondary
+                  : null,
+              ]}
+            >
+              {action.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  </View>
+);
+
 export function Board() {
   const sourceBins = useSourceBins();
   const stagingSlots = useStagingSlots();
   const destinationBins = useDestinationBins();
+  const moveInfo = useMoveInfo();
+  const status = useGameStatus();
   const applyMove = useGameStore((state) => state.applyMove);
   const undo = useGameStore((state) => state.undo);
+  const loadBoard = useGameStore((state) => state.loadBoard);
+  const reset = useGameStore((state) => state.reset);
   const historyLength = useGameStore((state) => state.boardState?.history.length ?? 0);
   const [boardSize, setBoardSize] = useState({ width: 0, height: 0 });
   const [selectedId, setSelectedId] = useState<ItemId | null>(null);
@@ -399,8 +471,67 @@ export function Board() {
     }
   };
 
+  const reloadTestLevel = () => {
+    setSelectedId(null);
+    reset();
+    loadBoard(TEST_LEVEL_CONFIG);
+  };
+
+  const moveBudgetLabel =
+    moveInfo.budget === null
+      ? `Moves: ${String(moveInfo.used)} / ∞`
+      : `Moves: ${String(moveInfo.used)} / ${String(moveInfo.budget)}`;
+  const moveBudgetColor = getMoveCounterColor(moveInfo.used, moveInfo.budget);
+
+  const overlay =
+    status === 'lost' ? (
+      <StatusOverlay
+        title="Out of moves"
+        actions={[
+          {
+            label: 'Retry',
+            onPress: reloadTestLevel,
+          },
+        ]}
+      />
+    ) : status === 'won' ? (
+      <StatusOverlay
+        title="Level complete"
+        actions={[
+          {
+            label: 'Next level',
+            onPress: reloadTestLevel,
+          },
+        ]}
+      />
+    ) : status === 'stuck' ? (
+      <StatusOverlay
+        title="You're stuck"
+        actions={[
+          ...(historyLength > 0
+            ? [
+                {
+                  label: 'Undo last move',
+                  onPress: handleUndoPress,
+                  variant: 'secondary' as const,
+                },
+              ]
+            : []),
+          {
+            label: 'Retry level',
+            onPress: reloadTestLevel,
+          },
+        ]}
+      />
+    ) : null;
+
   return (
     <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={[styles.headerText, { color: moveBudgetColor }]}>
+          {moveBudgetLabel}
+        </Text>
+      </View>
       <View style={styles.boardSurface} onLayout={onLayout}>
         {boardSize.width > 0 && boardSize.height > 0 ? (
           <>
@@ -565,6 +696,7 @@ export function Board() {
           <Text style={styles.undoButtonText}>Undo</Text>
         </Pressable>
       </View>
+      {overlay}
     </View>
   );
 }
@@ -573,6 +705,19 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     overflow: 'hidden',
+  },
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 10,
+    backgroundColor: '#EDE5D7',
+    borderBottomWidth: 1,
+    borderBottomColor: '#D6C9B6',
+  },
+  headerText: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   boardSurface: {
     flex: 1,
@@ -603,5 +748,60 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     letterSpacing: 0.3,
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(20, 16, 12, 0.48)',
+    paddingHorizontal: 24,
+  },
+  overlayCard: {
+    width: '100%',
+    maxWidth: 340,
+    borderRadius: 24,
+    paddingHorizontal: 22,
+    paddingVertical: 24,
+    backgroundColor: '#F8F3EA',
+    borderWidth: 1,
+    borderColor: '#CDBDA7',
+    alignItems: 'center',
+  },
+  overlayTitle: {
+    color: LABEL_COLOR,
+    fontSize: 28,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  overlayActions: {
+    width: '100%',
+    marginTop: 20,
+    gap: 12,
+  },
+  overlayButton: {
+    minHeight: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  overlayButtonPrimary: {
+    backgroundColor: '#3F5F4A',
+  },
+  overlayButtonSecondary: {
+    backgroundColor: '#E6DFD2',
+    borderWidth: 1,
+    borderColor: '#B5A898',
+  },
+  overlayButtonPressed: {
+    opacity: 0.88,
+  },
+  overlayButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  overlayButtonTextSecondary: {
+    color: LABEL_COLOR,
   },
 });
