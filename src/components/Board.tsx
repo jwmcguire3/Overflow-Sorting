@@ -11,14 +11,18 @@ import {
 } from '@shopify/react-native-skia';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
+  Easing,
+  interpolate,
+  type SharedValue,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
   withTiming,
+  withSequence,
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import {
+  type BoardState,
   canCommitItemToDestination,
   type DestinationBin,
   type Item,
@@ -34,6 +38,11 @@ import {
   useSourceBins,
   useStagingSlots,
 } from '../state';
+import {
+  deriveCommitFeedback,
+  derivePullFeedback,
+  FEEDBACK_TIMINGS,
+} from './board-feedback';
 import {
   findFrameIndexAtPoint,
   getBoardLayout,
@@ -62,7 +71,47 @@ type DragState = {
   readonly originFrame: Frame;
 };
 
-type DestinationHighlightState = 'none' | 'valid' | 'invalid' | 'flash';
+type DragPreviewState = {
+  readonly centerX: number;
+  readonly centerY: number;
+  readonly scale: number;
+  readonly opacity: number;
+};
+
+type PulseState = {
+  readonly index: number;
+  readonly token: number;
+  readonly variant: 'pull' | 'commit' | 'complete' | 'reject';
+};
+
+type DestinationPulseState = {
+  readonly destinationBinId: string;
+  readonly token: number;
+  readonly variant: 'commit' | 'complete' | 'reject';
+};
+
+type TransferState = {
+  readonly token: number;
+  readonly item: Item;
+  readonly fromFrame: Frame;
+  readonly toFrame: Frame;
+  readonly hideStagingIndex: number | null;
+};
+
+type ClearReleaseState = {
+  readonly destinationBinId: string;
+  readonly token: number;
+  readonly items: ReadonlyArray<Item>;
+};
+
+type DestinationHighlightState =
+  | 'none'
+  | 'valid'
+  | 'invalid'
+  | 'flash'
+  | 'commit'
+  | 'complete'
+  | 'reject';
 
 const BACKGROUND_COLOR = '#F5F1E8';
 const PANEL_COLOR = '#E6DFD2';
@@ -95,7 +144,13 @@ const ITEM_FONT = matchFont({
 const WARNING_COLOR = '#C78A11';
 const DANGER_COLOR = '#B5412C';
 const DRAG_SCALE = 1.08;
-const DROP_SNAP_DURATION_MS = 120;
+const DRAG_REJECT_SCALE = 0.94;
+const SLOT_CONFIRM_FILL = 'rgba(63, 95, 74, 0.12)';
+const SLOT_COMPLETE_FILL = 'rgba(63, 95, 74, 0.18)';
+const REJECT_FILL = 'rgba(224, 81, 81, 0.12)';
+const COMMIT_HIGHLIGHT_FILL = '#E2EDDE';
+const COMPLETE_HIGHLIGHT_FILL = '#DCE8D5';
+const COMPLETE_HIGHLIGHT_STROKE = '#3F5F4A';
 
 const getFrameCenter = (frame: Frame) => ({
   x: frame.x + frame.width / 2,
@@ -258,19 +313,29 @@ const renderDestinationBin = (
   const fillColor =
     highlightState === 'flash'
       ? FLASH_COLOR
-      : highlightState === 'valid'
-        ? VALID_HIGHLIGHT_FILL
-        : highlightState === 'invalid'
-          ? INVALID_HIGHLIGHT_FILL
-          : isLocked
-            ? LOCKED_FILL
-            : PANEL_COLOR;
+      : highlightState === 'complete'
+        ? COMPLETE_HIGHLIGHT_FILL
+        : highlightState === 'commit'
+          ? COMMIT_HIGHLIGHT_FILL
+          : highlightState === 'reject'
+            ? INVALID_HIGHLIGHT_FILL
+            : highlightState === 'valid'
+              ? VALID_HIGHLIGHT_FILL
+              : highlightState === 'invalid'
+                ? INVALID_HIGHLIGHT_FILL
+                : isLocked
+                  ? LOCKED_FILL
+                  : PANEL_COLOR;
   const strokeColor =
-    highlightState === 'valid'
-      ? VALID_HIGHLIGHT_STROKE
-      : highlightState === 'invalid' || highlightState === 'flash'
-        ? FLASH_COLOR
-        : lockedStrokeColor;
+    highlightState === 'complete'
+      ? COMPLETE_HIGHLIGHT_STROKE
+      : highlightState === 'commit' || highlightState === 'valid'
+        ? VALID_HIGHLIGHT_STROKE
+        : highlightState === 'reject' ||
+            highlightState === 'invalid' ||
+            highlightState === 'flash'
+          ? FLASH_COLOR
+          : lockedStrokeColor;
   const strokeWidth = highlightState === 'none' ? (isLocked ? 4 : 3) : 5;
   const itemPositions = getItemCirclePositions(frame, isLocked ? 3 : bin.contents.length);
 
@@ -429,7 +494,12 @@ const getDestinationHighlightState = (
   destinationBinId: string,
   flashState: FlashState,
   dragHoverState: DragHoverState,
+  pulseState: DestinationPulseState | null,
 ): DestinationHighlightState => {
+  if (pulseState?.destinationBinId === destinationBinId) {
+    return pulseState.variant;
+  }
+
   if (flashState.destinationBinId === destinationBinId) {
     return 'flash';
   }
@@ -444,28 +514,351 @@ const getDestinationHighlightState = (
 const DraggedItem = ({
   item,
   diameter,
-  animatedStyle,
+  preview,
+  isRejecting,
 }: {
   readonly item: Item;
   readonly diameter: number;
-  readonly animatedStyle: object;
+  readonly preview: DragPreviewState;
+  readonly isRejecting: boolean;
 }) => (
-  <Animated.View
+  <View
     pointerEvents="none"
     style={[
       styles.draggedItem,
       {
+        left: preview.centerX - diameter / 2,
+        top: preview.centerY - diameter / 2,
         width: diameter,
         height: diameter,
         borderRadius: diameter / 2,
         backgroundColor: getCategoryColor(item.category),
+        borderColor: isRejecting ? FLASH_COLOR : '#FFFFFF',
+        opacity: preview.opacity,
+        transform: [{ scale: preview.scale }],
       },
-      animatedStyle,
     ]}
   >
     <Text style={styles.draggedItemLabel}>{getVariantLetter(item)}</Text>
-  </Animated.View>
+  </View>
 );
+
+const FeedbackPulseOverlay = ({
+  frame,
+  token,
+  variant,
+}: {
+  readonly frame: Frame;
+  readonly token: number;
+  readonly variant: PulseState['variant'];
+}) => {
+  const progress = useSharedValue(0);
+
+  useEffect(() => {
+    progress.value = 0;
+    progress.value = withTiming(1, {
+      duration:
+        variant === 'complete'
+          ? FEEDBACK_TIMINGS.clearReleaseMs
+          : variant === 'reject'
+            ? FEEDBACK_TIMINGS.invalidRejectMs
+            : FEEDBACK_TIMINGS.pullConfirmMs,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [progress, token, variant]);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    const scale =
+      variant === 'complete'
+        ? interpolate(progress.value, [0, 0.35, 1], [0.9, 1.06, 1])
+        : variant === 'reject'
+          ? interpolate(progress.value, [0, 0.5, 1], [1, 1.02, 1])
+          : interpolate(progress.value, [0, 0.5, 1], [0.96, 1.04, 1]);
+    const opacity =
+      variant === 'complete'
+        ? interpolate(progress.value, [0, 0.15, 1], [0, 0.95, 0])
+        : interpolate(progress.value, [0, 0.2, 1], [0, 0.85, 0]);
+
+    return {
+      opacity,
+      transform: [{ scale }],
+    };
+  });
+
+  const borderColor =
+    variant === 'reject'
+      ? FLASH_COLOR
+      : variant === 'complete'
+        ? COMPLETE_HIGHLIGHT_STROKE
+        : VALID_HIGHLIGHT_STROKE;
+  const backgroundColor =
+    variant === 'reject'
+      ? REJECT_FILL
+      : variant === 'complete'
+        ? SLOT_COMPLETE_FILL
+        : SLOT_CONFIRM_FILL;
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.feedbackOverlay,
+        frameStyle(frame),
+        {
+          borderColor,
+          backgroundColor,
+        },
+        animatedStyle,
+      ]}
+    />
+  );
+};
+
+const DestinationPulseOverlay = ({
+  frame,
+  token,
+  variant,
+}: {
+  readonly frame: Frame;
+  readonly token: number;
+  readonly variant: DestinationPulseState['variant'];
+}) => {
+  const progress = useSharedValue(0);
+
+  useEffect(() => {
+    progress.value = 0;
+    progress.value = withTiming(1, {
+      duration:
+        variant === 'complete'
+          ? FEEDBACK_TIMINGS.clearReleaseMs
+          : variant === 'reject'
+            ? FEEDBACK_TIMINGS.invalidRejectMs
+            : FEEDBACK_TIMINGS.commitConfirmMs,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [progress, token, variant]);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    const scale =
+      variant === 'complete'
+        ? interpolate(progress.value, [0, 0.22, 0.55, 1], [0.94, 1.03, 1.02, 1])
+        : variant === 'reject'
+          ? interpolate(progress.value, [0, 0.5, 1], [1, 1.015, 1])
+          : interpolate(progress.value, [0, 0.2, 0.6, 1], [0.96, 1.04, 1.02, 1]);
+    const opacity =
+      variant === 'complete'
+        ? interpolate(progress.value, [0, 0.12, 1], [0, 0.95, 0])
+        : interpolate(progress.value, [0, 0.1, 1], [0, 0.88, 0]);
+
+    return {
+      opacity,
+      transform: [{ scale }],
+    };
+  });
+
+  const borderColor =
+    variant === 'reject'
+      ? FLASH_COLOR
+      : variant === 'complete'
+        ? COMPLETE_HIGHLIGHT_STROKE
+        : VALID_HIGHLIGHT_STROKE;
+  const backgroundColor =
+    variant === 'reject'
+      ? REJECT_FILL
+      : variant === 'complete'
+        ? 'rgba(63, 95, 74, 0.16)'
+        : 'rgba(90, 134, 97, 0.14)';
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.feedbackOverlay,
+        frameStyle(frame),
+        {
+          borderColor,
+          backgroundColor,
+        },
+        animatedStyle,
+      ]}
+    />
+  );
+};
+
+const TransferOverlay = ({
+  transfer,
+  onComplete,
+}: {
+  readonly transfer: TransferState;
+  readonly onComplete: (token: number) => void;
+}) => {
+  const progress = useSharedValue(0);
+  const fromCenter = getFrameCenter(transfer.fromFrame);
+  const toCenter = getFrameCenter(transfer.toFrame);
+  const diameter = Math.min(
+    getStagingItemRadius(transfer.fromFrame),
+    getStagingItemRadius(transfer.toFrame),
+  ) * 2;
+
+  useEffect(() => {
+    progress.value = 0;
+    progress.value = withTiming(
+      1,
+      {
+        duration: FEEDBACK_TIMINGS.pullTravelMs,
+        easing: Easing.out(Easing.cubic),
+      },
+      () => {
+        scheduleOnRN(onComplete, transfer.token);
+      },
+    );
+  }, [onComplete, progress, transfer.token]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 0.88, 1], [0.98, 0.98, 0]),
+    transform: [
+      {
+        translateX: interpolate(progress.value, [0, 1], [fromCenter.x, toCenter.x]) -
+          diameter / 2,
+      },
+      {
+        translateY: interpolate(progress.value, [0, 1], [fromCenter.y, toCenter.y]) -
+          diameter / 2,
+      },
+      {
+        scale: interpolate(progress.value, [0, 0.7, 1], [0.94, 1.08, 0.98]),
+      },
+    ],
+  }));
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.draggedItem,
+        {
+          width: diameter,
+          height: diameter,
+          borderRadius: diameter / 2,
+          backgroundColor: getCategoryColor(transfer.item.category),
+        },
+        animatedStyle,
+      ]}
+    >
+      <Text style={styles.draggedItemLabel}>{getVariantLetter(transfer.item)}</Text>
+    </Animated.View>
+  );
+};
+
+const ClearReleaseOverlay = ({
+  frame,
+  items,
+  token,
+}: {
+  readonly frame: Frame;
+  readonly items: ReadonlyArray<Item>;
+  readonly token: number;
+}) => {
+  const progress = useSharedValue(0);
+
+  useEffect(() => {
+    progress.value = 0;
+    progress.value = withSequence(
+      withTiming(0.28, {
+        duration: FEEDBACK_TIMINGS.completionHoldMs,
+        easing: Easing.out(Easing.quad),
+      }),
+      withTiming(1, {
+        duration: FEEDBACK_TIMINGS.clearReleaseMs,
+        easing: Easing.out(Easing.cubic),
+      }),
+    );
+  }, [progress, token]);
+
+  const positions = getItemCirclePositions(frame, items.length);
+
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {items.map((item, index) => {
+        const position = positions[index];
+        if (!position) {
+          return null;
+        }
+
+        return (
+          <ClearReleaseItem
+            key={item.id}
+            item={item}
+            index={index}
+            itemCount={items.length}
+            position={position}
+            progress={progress}
+          />
+        );
+      })}
+    </View>
+  );
+};
+
+const ClearReleaseItem = ({
+  item,
+  index,
+  itemCount,
+  position,
+  progress,
+}: {
+  readonly item: Item;
+  readonly index: number;
+  readonly itemCount: number;
+  readonly position: { readonly x: number; readonly y: number; readonly radius: number };
+  readonly progress: SharedValue<number>;
+}) => {
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 0.28, 1], [1, 1, 0]),
+    transform: [
+      {
+        translateX:
+          position.x -
+          position.radius +
+          interpolate(
+            progress.value,
+            [0, 0.28, 1],
+            [0, 0, (index - (itemCount - 1) / 2) * position.radius * 1.45],
+          ),
+      },
+      {
+        translateY:
+          position.y -
+          position.radius +
+          interpolate(
+            progress.value,
+            [0, 0.28, 1],
+            [0, 0, -position.radius * (1.1 + index * 0.12)],
+          ),
+      },
+      {
+        scale: interpolate(progress.value, [0, 0.28, 1], [1, 1.06, 0.76]),
+      },
+    ],
+  }));
+
+  return (
+    <Animated.View
+      style={[
+        styles.clearItem,
+        {
+          width: position.radius * 2,
+          height: position.radius * 2,
+          borderRadius: position.radius,
+          backgroundColor: getCategoryColor(item.category),
+        },
+        animatedStyle,
+      ]}
+    >
+      <Text style={styles.clearItemLabel}>{getVariantLetter(item)}</Text>
+    </Animated.View>
+  );
+};
 
 export function Board({
   headerAccessory,
@@ -479,6 +872,7 @@ export function Board({
   const sourceBins = useSourceBins();
   const stagingSlots = useStagingSlots();
   const destinationBins = useDestinationBins();
+  const boardState = useGameStore((state) => state.boardState);
   const moveInfo = useMoveInfo();
   const status = useGameStatus();
   const applyMove = useGameStore((state) => state.applyMove);
@@ -492,15 +886,20 @@ export function Board({
     destinationBinId: null,
   });
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const [dragPreview, setDragPreview] = useState<DragPreviewState | null>(null);
   const [dragHoverState, setDragHoverState] = useState<DragHoverState>({
     destinationBinId: null,
     isValid: null,
   });
+  const [stagingPulse, setStagingPulse] = useState<PulseState | null>(null);
+  const [destinationPulse, setDestinationPulse] = useState<DestinationPulseState | null>(
+    null,
+  );
+  const [transferState, setTransferState] = useState<TransferState | null>(null);
+  const [clearReleaseState, setClearReleaseState] = useState<ClearReleaseState | null>(null);
+  const [isRejectingDrag, setIsRejectingDrag] = useState(false);
   const flashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dragX = useSharedValue(0);
-  const dragY = useSharedValue(0);
-  const dragScale = useSharedValue(1);
-  const dragOpacity = useSharedValue(0);
+  const feedbackTokenRef = useRef(0);
 
   const layout = getBoardLayout(
     boardSize.width,
@@ -538,9 +937,14 @@ export function Board({
       destinationBinId: null,
       isValid: null,
     });
-    dragOpacity.value = 0;
-    dragScale.value = 1;
-  }, [dragOpacity, dragScale, status]);
+    setDragPreview(null);
+    setIsRejectingDrag(false);
+  }, [status]);
+
+  const nextFeedbackToken = () => {
+    feedbackTokenRef.current += 1;
+    return feedbackTokenRef.current;
+  };
 
   const flashElement = (nextFlash: FlashState) => {
     if (flashTimeoutRef.current) {
@@ -558,6 +962,63 @@ export function Board({
     }, 300);
   };
 
+  const triggerStagingPulse = (
+    index: number,
+    variant: PulseState['variant'],
+  ) => {
+    setStagingPulse({
+      index,
+      variant,
+      token: nextFeedbackToken(),
+    });
+  };
+
+  const triggerDestinationPulse = (
+    destinationBinId: string,
+    variant: DestinationPulseState['variant'],
+  ) => {
+    setDestinationPulse({
+      destinationBinId,
+      variant,
+      token: nextFeedbackToken(),
+    });
+  };
+
+  const triggerCommitFeedback = (
+    previousState: BoardState,
+    nextState: BoardState,
+    destinationBinId: string,
+    itemId: ItemId,
+  ) => {
+    const feedback = deriveCommitFeedback(
+      previousState,
+      nextState,
+      destinationBinId,
+      itemId,
+    );
+
+    if (!feedback) {
+      return;
+    }
+
+    triggerDestinationPulse(
+      feedback.destinationBinId,
+      feedback.didCompleteGroup ? 'complete' : 'commit',
+    );
+
+    if (feedback.didCompleteGroup) {
+      triggerStagingPulse(feedback.stagingIndex, 'complete');
+      setClearReleaseState({
+        destinationBinId: feedback.destinationBinId,
+        items: [...feedback.previousContents, feedback.item],
+        token: nextFeedbackToken(),
+      });
+      return;
+    }
+
+    triggerStagingPulse(feedback.stagingIndex, 'commit');
+  };
+
   const onLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     setBoardSize({ width, height });
@@ -565,38 +1026,51 @@ export function Board({
 
   const clearDragInteraction = () => {
     setDragState(null);
+    setDragPreview(null);
     setDragHoverState({
       destinationBinId: null,
       isValid: null,
     });
-    dragOpacity.value = 0;
-    dragScale.value = 1;
+    setIsRejectingDrag(false);
   };
 
-  const animateDragBackToOrigin = (nextSelectedId: ItemId | null) => {
+  const handleTransferComplete = (token: number) => {
+    setTransferState((current) => {
+      if (!current || current.token !== token) {
+        return current;
+      }
+
+      if (current.hideStagingIndex !== null) {
+        triggerStagingPulse(current.hideStagingIndex, 'pull');
+      }
+
+      return null;
+    });
+  };
+
+  const animateDragBackToOrigin = (
+    nextSelectedId: ItemId | null,
+    options?: {
+      readonly isReject?: boolean;
+    },
+  ) => {
     if (!dragState) {
       return;
     }
 
     const originCenter = getFrameCenter(dragState.originFrame);
-    dragScale.value = withSpring(1, {
-      stiffness: 240,
-      damping: 18,
-      mass: 0.7,
+    const isReject = options?.isReject ?? false;
+    setIsRejectingDrag(isReject);
+    setDragPreview({
+      centerX: originCenter.x,
+      centerY: originCenter.y,
+      scale: isReject ? DRAG_REJECT_SCALE : 1,
+      opacity: 1,
     });
-    dragX.value = withSpring(originCenter.x, {
-      stiffness: 260,
-      damping: 18,
-      mass: 0.75,
-    });
-    dragY.value = withSpring(originCenter.y, {
-      stiffness: 260,
-      damping: 18,
-      mass: 0.75,
-    }, () => {
-      scheduleOnRN(setSelectedId, nextSelectedId);
-      scheduleOnRN(clearDragInteraction);
-    });
+    setTimeout(() => {
+      setSelectedId(nextSelectedId);
+      clearDragInteraction();
+    }, isReject ? 90 : 0);
   };
 
   const updateDragHover = (pointX: number, pointY: number, item: Item) => {
@@ -645,10 +1119,12 @@ export function Board({
       isValid: null,
     });
     setSelectedId(slot.item.id);
-    dragX.value = originCenter.x;
-    dragY.value = originCenter.y;
-    dragScale.value = withTiming(DRAG_SCALE, { duration: 120 });
-    dragOpacity.value = 1;
+    setDragPreview({
+      centerX: originCenter.x,
+      centerY: originCenter.y,
+      scale: DRAG_SCALE,
+      opacity: 1,
+    });
   };
 
   const updateDrag = (stagingIndex: number, translationX: number, translationY: number) => {
@@ -661,12 +1137,21 @@ export function Board({
     const originCenter = getFrameCenter(frame);
     const nextX = originCenter.x + translationX;
     const nextY = originCenter.y + translationY;
-    dragX.value = nextX;
-    dragY.value = nextY;
+    setDragPreview({
+      centerX: nextX,
+      centerY: nextY,
+      scale: DRAG_SCALE,
+      opacity: 1,
+    });
     updateDragHover(nextX, nextY, slot.item);
   };
 
   const finishDrag = (stagingIndex: number, translationX: number, translationY: number) => {
+    if (!boardState) {
+      clearDragInteraction();
+      return;
+    }
+
     const slot = stagingSlots.find((candidate) => candidate.index === stagingIndex);
     const frame = layout.stagingFrames[stagingIndex];
     if (!slot?.item || !frame) {
@@ -688,12 +1173,14 @@ export function Board({
     }
 
     if (!canCommitItemToDestination(slot.item, hoveredDestination)) {
+      triggerStagingPulse(stagingIndex, 'reject');
+      triggerDestinationPulse(hoveredDestination.id, 'reject');
       flashElement({
         sourceBinId: null,
         stagingIndex,
         destinationBinId: hoveredDestination.id,
       });
-      animateDragBackToOrigin(slot.item.id);
+      animateDragBackToOrigin(slot.item.id, { isReject: true });
       return;
     }
 
@@ -716,42 +1203,43 @@ export function Board({
       });
 
       if (!result.success) {
+        triggerStagingPulse(draggedStagingIndex, 'reject');
+        triggerDestinationPulse(destinationBinId, 'reject');
         flashElement({
           sourceBinId: null,
           stagingIndex: draggedStagingIndex,
           destinationBinId,
         });
-        animateDragBackToOrigin(itemId);
+        animateDragBackToOrigin(itemId, { isReject: true });
         return;
       }
 
+      triggerCommitFeedback(
+        boardState,
+        result.nextState,
+        destinationBinId,
+        itemId,
+      );
       setSelectedId(null);
       clearDragInteraction();
     };
     const destinationCenter = getFrameCenter(destinationFrame);
-    dragScale.value = withTiming(1, { duration: DROP_SNAP_DURATION_MS });
-    dragX.value = withTiming(destinationCenter.x, { duration: DROP_SNAP_DURATION_MS });
-    dragY.value = withTiming(destinationCenter.y, { duration: DROP_SNAP_DURATION_MS }, () => {
-      scheduleOnRN(completeValidDrop, draggedItemId, hoveredDestination.id, stagingIndex);
+    setDragPreview({
+      centerX: destinationCenter.x,
+      centerY: destinationCenter.y,
+      scale: 1.14,
+      opacity: 1,
     });
+    setTimeout(() => {
+      completeValidDrop(draggedItemId, hoveredDestination.id, stagingIndex);
+    }, FEEDBACK_TIMINGS.commitSnapMs);
   };
 
-  const draggedItemAnimatedStyle = useAnimatedStyle(() => {
-    const draggedItemRadius = dragState ? getStagingItemRadius(dragState.originFrame) : 0;
-
-    return {
-      opacity: dragOpacity.value,
-      transform: [
-        { translateX: dragX.value },
-        { translateY: dragY.value },
-        { translateX: -draggedItemRadius },
-        { translateY: -draggedItemRadius },
-        { scale: dragScale.value },
-      ],
-    };
-  }, [dragState]);
-
   const handleSourceTapById = (sourceBinId: string) => {
+    if (!boardState) {
+      return;
+    }
+
     const bin = sourceBins.find((candidate) => candidate.id === sourceBinId);
     if (!bin) {
       return;
@@ -779,7 +1267,29 @@ export function Board({
         stagingIndex: null,
         destinationBinId: null,
       });
+      return;
     }
+
+    const feedback = derivePullFeedback(boardState, result.nextState, bin.id, topItem.id);
+    if (!feedback) {
+      return;
+    }
+
+    const sourceIndex = sourceBins.findIndex((candidate) => candidate.id === bin.id);
+    const sourceFrame = layout.sourceFrames[sourceIndex];
+    const stagingFrame = layout.stagingFrames[feedback.stagingIndex];
+    if (!sourceFrame || !stagingFrame) {
+      triggerStagingPulse(feedback.stagingIndex, 'pull');
+      return;
+    }
+
+    setTransferState({
+      token: nextFeedbackToken(),
+      item: feedback.item,
+      fromFrame: sourceFrame,
+      toFrame: stagingFrame,
+      hideStagingIndex: feedback.stagingIndex,
+    });
   };
 
   const handleStagingTapByIndex = (stagingIndex: number) => {
@@ -793,8 +1303,12 @@ export function Board({
   };
 
   const handleDestinationTapById = (destBinId: string) => {
+    if (!boardState || !selectedId) {
+      return;
+    }
+
     const bin = destinationBins.find((candidate) => candidate.id === destBinId);
-    if (!bin || !selectedId) {
+    if (!bin) {
       return;
     }
 
@@ -806,6 +1320,10 @@ export function Board({
 
     if (!result.success) {
       const selectedSlot = stagingSlots.find((slot) => slot.item?.id === selectedId);
+      if (selectedSlot) {
+        triggerStagingPulse(selectedSlot.index, 'reject');
+      }
+      triggerDestinationPulse(bin.id, 'reject');
       flashElement({
         sourceBinId: null,
         stagingIndex: selectedSlot?.index ?? null,
@@ -814,6 +1332,7 @@ export function Board({
       return;
     }
 
+    triggerCommitFeedback(boardState, result.nextState, bin.id, selectedId);
     setSelectedId(null);
   };
 
@@ -959,7 +1478,8 @@ export function Board({
                   frame,
                   slot.item?.id === selectedId,
                   flashState.stagingIndex === slot.index,
-                  dragState?.item.id === slot.item?.id,
+                  dragState?.item.id === slot.item?.id ||
+                    transferState?.hideStagingIndex === slot.index,
                 );
               })}
               {destinationBins.map((bin, index) => {
@@ -971,17 +1491,80 @@ export function Board({
                 return renderDestinationBin(
                   bin,
                   frame,
-                  getDestinationHighlightState(bin.id, flashState, dragHoverState),
+                  getDestinationHighlightState(
+                    bin.id,
+                    flashState,
+                    dragHoverState,
+                    destinationPulse,
+                  ),
                 );
               })}
             </Canvas>
-            {dragState ? (
-              <DraggedItem
-                item={dragState.item}
-                diameter={draggedItemDiameter}
-                animatedStyle={draggedItemAnimatedStyle}
-              />
-            ) : null}
+            <View pointerEvents="none" style={styles.feedbackLayer}>
+              {dragState ? (
+                <DraggedItem
+                  item={dragState.item}
+                  diameter={draggedItemDiameter}
+                  preview={
+                    dragPreview ?? {
+                      centerX: 0,
+                      centerY: 0,
+                      scale: 1,
+                      opacity: 0,
+                    }
+                  }
+                  isRejecting={isRejectingDrag}
+                />
+              ) : null}
+              {transferState ? (
+                <TransferOverlay
+                  transfer={transferState}
+                  onComplete={handleTransferComplete}
+                />
+              ) : null}
+              {stagingPulse
+                ? (() => {
+                    const frame = layout.stagingFrames[stagingPulse.index];
+                    return frame ? (
+                      <FeedbackPulseOverlay
+                        frame={frame}
+                        token={stagingPulse.token}
+                        variant={stagingPulse.variant}
+                      />
+                    ) : null;
+                  })()
+                : null}
+              {destinationPulse
+                ? (() => {
+                    const destinationIndex = destinationBins.findIndex(
+                      (bin) => bin.id === destinationPulse.destinationBinId,
+                    );
+                    const frame = layout.destinationFrames[destinationIndex];
+                    return frame ? (
+                      <DestinationPulseOverlay
+                        frame={frame}
+                        token={destinationPulse.token}
+                        variant={destinationPulse.variant}
+                      />
+                    ) : null;
+                  })()
+                : null}
+              {clearReleaseState
+                ? (() => {
+                    const destinationIndex = destinationBins.findIndex(
+                      (bin) => bin.id === clearReleaseState.destinationBinId,
+                    );
+                    const frame = layout.destinationFrames[destinationIndex];
+                    return frame ? (
+                      <ClearReleaseOverlay
+                        frame={frame}
+                        items={clearReleaseState.items}
+                        token={clearReleaseState.token}
+                      />
+                    ) : null;
+                  })()
+                : null}
+            </View>
             {sourceBins.map((bin, index) => {
               const frame = layout.sourceFrames[index];
               if (!frame) {
@@ -1124,9 +1707,17 @@ const styles = StyleSheet.create({
   },
   boardSurface: {
     flex: 1,
+    position: 'relative',
+  },
+  feedbackLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    elevation: 20,
   },
   draggedItem: {
     position: 'absolute',
+    left: 0,
+    top: 0,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 3,
@@ -1141,9 +1732,29 @@ const styles = StyleSheet.create({
     elevation: 10,
     zIndex: 2,
   },
+  feedbackOverlay: {
+    position: 'absolute',
+    borderRadius: 18,
+    borderWidth: 4,
+    zIndex: 1,
+  },
   draggedItemLabel: {
     color: '#FFFFFF',
     fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  clearItem: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    zIndex: 1,
+  },
+  clearItemLabel: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.2,
   },
