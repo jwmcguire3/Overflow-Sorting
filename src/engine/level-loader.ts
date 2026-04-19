@@ -14,10 +14,19 @@ const formatLevelParseErrors = (issues: ReadonlyArray<{ path: PropertyKey[]; mes
     })
     .join('; ');
 
-const createGeneratedItemId = () => {
-  const randomUUID = globalThis.crypto.randomUUID.bind(globalThis.crypto);
+const createUuidV4 = () => {
+  let timestamp = Date.now();
 
-  return createItemId(randomUUID());
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
+    const randomNibble = (timestamp + Math.random() * 16) % 16 | 0;
+    timestamp = Math.floor(timestamp / 16);
+
+    return (character === 'x' ? randomNibble : (randomNibble & 0x3) | 0x8).toString(16);
+  });
+};
+
+const createGeneratedItemId = () => {
+  return createItemId(createUuidV4());
 };
 
 const createBoardItem = (

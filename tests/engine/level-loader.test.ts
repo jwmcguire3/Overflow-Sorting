@@ -64,7 +64,7 @@ describe('level loader', () => {
         sourceBins: [],
         destinationBins: [],
       }),
-    ).toThrowError(/stagingCapacity/i);
+    ).toThrow(/stagingCapacity/i);
   });
 
   it('stability defaults to stable when omitted', () => {
@@ -93,7 +93,7 @@ describe('level loader', () => {
           ],
         }),
       ),
-    ).toThrowError(/timer/i);
+    ).toThrow(/timer/i);
   });
 
   it('parses each authored test level successfully', () => {

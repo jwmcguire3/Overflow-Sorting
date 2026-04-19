@@ -10,7 +10,7 @@ import {
   matchFont,
 } from '@shopify/react-native-skia';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-worklets';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import type { DestinationBin, ItemId, SourceBin, StagingSlot } from '../engine';
 import {
@@ -629,7 +629,7 @@ export function Board({
               }
 
               const tapGesture = Gesture.Tap().onEnd(() => {
-                runOnJS(handleSourceTapById)(bin.id);
+                scheduleOnRN(handleSourceTapById, bin.id);
               });
 
               return (
@@ -649,7 +649,7 @@ export function Board({
               }
 
               const tapGesture = Gesture.Tap().onEnd(() => {
-                runOnJS(handleStagingTapByIndex)(slot.index);
+                scheduleOnRN(handleStagingTapByIndex, slot.index);
               });
 
               return (
@@ -672,7 +672,7 @@ export function Board({
               }
 
               const tapGesture = Gesture.Tap().onEnd(() => {
-                runOnJS(handleDestinationTapById)(bin.id);
+                scheduleOnRN(handleDestinationTapById, bin.id);
               });
 
               return (
