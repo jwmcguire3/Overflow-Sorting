@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { LayoutChangeEvent, StyleSheet, View } from 'react-native';
+import { LayoutChangeEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   Canvas,
   Circle,
   Group,
   Rect,
   RoundedRect,
-  Text,
+  Text as SkiaText,
   matchFont,
 } from '@shopify/react-native-skia';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -91,14 +91,14 @@ const renderSourceBin = (
         r={18}
         color={fillColor}
       />
-      <Text
+      <SkiaText
         x={frame.x + 12}
         y={frame.y + 24}
         text={bin.id.toUpperCase()}
         font={SOURCE_FONT}
         color={LABEL_COLOR}
       />
-      <Text
+      <SkiaText
         x={frame.x + 12}
         y={frame.y + 44}
         text={'Top ' + String(topLayer.length)}
@@ -119,7 +119,7 @@ const renderSourceBin = (
               r={position.radius}
               color={getCategoryColor(item.category)}
             />
-            <Text
+            <SkiaText
               x={position.x - position.radius * 0.35}
               y={position.y + position.radius * 0.25}
               text={getVariantLetter(item)}
@@ -167,7 +167,7 @@ const renderStagingSlot = (
         style="stroke"
         strokeWidth={borderWidth}
       />
-      <Text
+      <SkiaText
         x={frame.x + 12}
         y={frame.y + 24}
         text={'SLOT ' + String(slot.index + 1)}
@@ -182,7 +182,7 @@ const renderStagingSlot = (
             r={Math.min(22, frame.width / 5)}
             color={getCategoryColor(item.category)}
           />
-          <Text
+          <SkiaText
             x={frame.x + frame.width / 2 - 6}
             y={frame.y + frame.height * 0.62 + 6}
             text={getVariantLetter(item)}
@@ -213,21 +213,21 @@ const renderDestinationBin = (
         r={18}
         color={fillColor}
       />
-      <Text
+      <SkiaText
         x={frame.x + 12}
         y={frame.y + 24}
         text={bin.accepts.toUpperCase()}
         font={SOURCE_FONT}
         color={LABEL_COLOR}
       />
-      <Text
+      <SkiaText
         x={frame.x + 12}
         y={frame.y + 44}
         text={String(bin.contents.length) + '/3'}
         font={BODY_FONT}
         color={LABEL_COLOR}
       />
-      <Text
+      <SkiaText
         x={frame.x + 12}
         y={frame.y + 62}
         text={'Cleared ' + String(bin.completedGroups)}
@@ -248,7 +248,7 @@ const renderDestinationBin = (
               r={position.radius}
               color={getCategoryColor(item.category)}
             />
-            <Text
+            <SkiaText
               x={position.x - position.radius * 0.35}
               y={position.y + position.radius * 0.25}
               text={getVariantLetter(item)}
@@ -267,6 +267,8 @@ export function Board() {
   const stagingSlots = useStagingSlots();
   const destinationBins = useDestinationBins();
   const applyMove = useGameStore((state) => state.applyMove);
+  const undo = useGameStore((state) => state.undo);
+  const historyLength = useGameStore((state) => state.boardState?.history.length ?? 0);
   const [boardSize, setBoardSize] = useState({ width: 0, height: 0 });
   const [selectedId, setSelectedId] = useState<ItemId | null>(null);
   const [flashState, setFlashState] = useState<FlashState>({
@@ -389,61 +391,116 @@ export function Board() {
     setSelectedId(null);
   };
 
+  const handleUndoPress = () => {
+    const result = undo();
+
+    if (result.success) {
+      setSelectedId(null);
+    }
+  };
+
   return (
-    <View style={styles.container} onLayout={onLayout}>
-      {boardSize.width > 0 && boardSize.height > 0 ? (
-        <>
-          <Canvas style={StyleSheet.absoluteFill}>
-            <Rect
-              x={0}
-              y={0}
-              width={layout.canvasWidth}
-              height={layout.canvasHeight}
-              color={BACKGROUND_COLOR}
-            />
-            <Rect
-              x={0}
-              y={0}
-              width={layout.canvasWidth}
-              height={layout.canvasHeight * 0.25}
-              color="#EDE5D7"
-            />
-            <Rect
-              x={0}
-              y={layout.canvasHeight * 0.25}
-              width={layout.canvasWidth}
-              height={layout.canvasHeight * 0.4}
-              color="#F8F5EE"
-            />
-            <Rect
-              x={0}
-              y={layout.canvasHeight * 0.75}
-              width={layout.canvasWidth}
-              height={layout.canvasHeight * 0.25}
-              color="#EDE5D7"
-            />
-            <Text x={16} y={20} text="Sources" font={SOURCE_FONT} color={LABEL_COLOR} />
-            <Text
-              x={16}
-              y={layout.canvasHeight * 0.25 + 20}
-              text="Staging"
-              font={SOURCE_FONT}
-              color={LABEL_COLOR}
-            />
-            <Text
-              x={16}
-              y={layout.canvasHeight * 0.75 + 20}
-              text="Destinations"
-              font={SOURCE_FONT}
-              color={LABEL_COLOR}
-            />
+    <View style={styles.container}>
+      <View style={styles.boardSurface} onLayout={onLayout}>
+        {boardSize.width > 0 && boardSize.height > 0 ? (
+          <>
+            <Canvas style={StyleSheet.absoluteFill}>
+              <Rect
+                x={0}
+                y={0}
+                width={layout.canvasWidth}
+                height={layout.canvasHeight}
+                color={BACKGROUND_COLOR}
+              />
+              <Rect
+                x={0}
+                y={0}
+                width={layout.canvasWidth}
+                height={layout.canvasHeight * 0.25}
+                color="#EDE5D7"
+              />
+              <Rect
+                x={0}
+                y={layout.canvasHeight * 0.25}
+                width={layout.canvasWidth}
+                height={layout.canvasHeight * 0.4}
+                color="#F8F5EE"
+              />
+              <Rect
+                x={0}
+                y={layout.canvasHeight * 0.75}
+                width={layout.canvasWidth}
+                height={layout.canvasHeight * 0.25}
+                color="#EDE5D7"
+              />
+              <SkiaText x={16} y={20} text="Sources" font={SOURCE_FONT} color={LABEL_COLOR} />
+              <SkiaText
+                x={16}
+                y={layout.canvasHeight * 0.25 + 20}
+                text="Staging"
+                font={SOURCE_FONT}
+                color={LABEL_COLOR}
+              />
+              <SkiaText
+                x={16}
+                y={layout.canvasHeight * 0.75 + 20}
+                text="Destinations"
+                font={SOURCE_FONT}
+                color={LABEL_COLOR}
+              />
+              {sourceBins.map((bin, index) => {
+                const frame = layout.sourceFrames[index];
+                if (!frame) {
+                  return null;
+                }
+
+                return renderSourceBin(bin, frame, flashState.sourceBinId === bin.id);
+              })}
+              {stagingSlots.map((slot, index) => {
+                const frame = layout.stagingFrames[index];
+                if (!frame) {
+                  return null;
+                }
+
+                return renderStagingSlot(
+                  slot,
+                  frame,
+                  slot.item?.id === selectedId,
+                  flashState.stagingIndex === slot.index,
+                );
+              })}
+              {destinationBins.map((bin, index) => {
+                const frame = layout.destinationFrames[index];
+                if (!frame) {
+                  return null;
+                }
+
+                return renderDestinationBin(
+                  bin,
+                  frame,
+                  flashState.destinationBinId === bin.id,
+                );
+              })}
+            </Canvas>
             {sourceBins.map((bin, index) => {
               const frame = layout.sourceFrames[index];
               if (!frame) {
                 return null;
               }
 
-              return renderSourceBin(bin, frame, flashState.sourceBinId === bin.id);
+              const tapGesture = Gesture.Tap().onEnd(() => {
+                runOnJS(handleSourceTapById)(bin.id);
+              });
+
+              return (
+                <GestureDetector key={'source-hit-' + bin.id} gesture={tapGesture}>
+                  <View
+                    collapsable={false}
+                    pointerEvents="box-only"
+                    style={frameStyle(frame)}
+                  />
+                </GestureDetector>
+              );
             })}
             {stagingSlots.map((slot, index) => {
               const frame = layout.stagingFrames[index];
@@ -451,11 +508,21 @@ export function Board() {
                 return null;
               }
 
-              return renderStagingSlot(
-                slot,
-                frame,
-                slot.item?.id === selectedId,
-                flashState.stagingIndex === slot.index,
+              const tapGesture = Gesture.Tap().onEnd(() => {
+                runOnJS(handleStagingTapByIndex)(slot.index);
+              });
+
+              return (
+                <GestureDetector
+                  key={'staging-hit-' + String(slot.index)}
+                  gesture={tapGesture}
+                >
+                  <View
+                    collapsable={false}
+                    pointerEvents="box-only"
+                    style={frameStyle(frame)}
+                  />
+                </GestureDetector>
               );
             })}
             {destinationBins.map((bin, index) => {
@@ -464,81 +531,40 @@ export function Board() {
                 return null;
               }
 
-              return renderDestinationBin(
-                bin,
-                frame,
-                flashState.destinationBinId === bin.id,
+              const tapGesture = Gesture.Tap().onEnd(() => {
+                runOnJS(handleDestinationTapById)(bin.id);
+              });
+
+              return (
+                <GestureDetector
+                  key={'destination-hit-' + bin.id}
+                  gesture={tapGesture}
+                >
+                  <View
+                    collapsable={false}
+                    pointerEvents="box-only"
+                    style={frameStyle(frame)}
+                  />
+                </GestureDetector>
               );
             })}
-          </Canvas>
-          {sourceBins.map((bin, index) => {
-            const frame = layout.sourceFrames[index];
-            if (!frame) {
-              return null;
-            }
-
-            const tapGesture = Gesture.Tap().onEnd(() => {
-              runOnJS(handleSourceTapById)(bin.id);
-            });
-
-            return (
-              <GestureDetector key={'source-hit-' + bin.id} gesture={tapGesture}>
-                <View
-                  collapsable={false}
-                  pointerEvents="box-only"
-                  style={frameStyle(frame)}
-                />
-              </GestureDetector>
-            );
-          })}
-          {stagingSlots.map((slot, index) => {
-            const frame = layout.stagingFrames[index];
-            if (!frame) {
-              return null;
-            }
-
-            const tapGesture = Gesture.Tap().onEnd(() => {
-              runOnJS(handleStagingTapByIndex)(slot.index);
-            });
-
-            return (
-              <GestureDetector
-                key={'staging-hit-' + String(slot.index)}
-                gesture={tapGesture}
-              >
-                <View
-                  collapsable={false}
-                  pointerEvents="box-only"
-                  style={frameStyle(frame)}
-                />
-              </GestureDetector>
-            );
-          })}
-          {destinationBins.map((bin, index) => {
-            const frame = layout.destinationFrames[index];
-            if (!frame) {
-              return null;
-            }
-
-            const tapGesture = Gesture.Tap().onEnd(() => {
-              runOnJS(handleDestinationTapById)(bin.id);
-            });
-
-            return (
-              <GestureDetector
-                key={'destination-hit-' + bin.id}
-                gesture={tapGesture}
-              >
-                <View
-                  collapsable={false}
-                  pointerEvents="box-only"
-                  style={frameStyle(frame)}
-                />
-              </GestureDetector>
-            );
-          })}
-        </>
-      ) : null}
+          </>
+        ) : null}
+      </View>
+      <View style={styles.toolbar}>
+        <Pressable
+          accessibilityLabel="Undo"
+          disabled={historyLength === 0}
+          onPress={handleUndoPress}
+          style={({ pressed }) => [
+            styles.undoButton,
+            historyLength === 0 ? styles.undoButtonDisabled : null,
+            pressed && historyLength > 0 ? styles.undoButtonPressed : null,
+          ]}
+        >
+          <Text style={styles.undoButtonText}>Undo</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -547,5 +573,35 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     overflow: 'hidden',
+  },
+  boardSurface: {
+    flex: 1,
+  },
+  toolbar: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 16,
+    backgroundColor: '#E6DFD2',
+    borderTopWidth: 1,
+    borderTopColor: '#C9BEAE',
+  },
+  undoButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+    borderRadius: 14,
+    backgroundColor: '#3F5F4A',
+  },
+  undoButtonDisabled: {
+    backgroundColor: '#AAA39A',
+  },
+  undoButtonPressed: {
+    opacity: 0.86,
+  },
+  undoButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
 });

@@ -96,7 +96,34 @@ describe('game store', () => {
     expect(result.success).toBe(true);
     expect(boardState?.sourceBins[0]?.layers).toEqual([]);
     expect(boardState?.stagingSlots[0]?.item?.id).toBe(itemId);
+    expect(boardState?.history).toHaveLength(1);
     expect(boardState?.movesUsed).toBe(1);
+  });
+
+  it('undo restores the previous board state through the store action', () => {
+    const config = makeConfig();
+    useGameStore.getState().loadBoard(config);
+
+    const itemId = config.sourceBins[0]?.layers[0]?.[0]?.id;
+    expect(itemId).toBeDefined();
+    if (!itemId) {
+      throw new Error('Expected a source item in the test config.');
+    }
+
+    useGameStore.getState().applyMove({
+      type: 'pull',
+      sourceBinId: 'source-a',
+      itemId,
+    });
+
+    const result = useGameStore.getState().undo();
+    const boardState = useGameStore.getState().boardState;
+
+    expect(result.success).toBe(true);
+    expect(boardState?.sourceBins[0]?.layers[0]?.[0]?.id).toBe(itemId);
+    expect(boardState?.stagingSlots[0]?.item).toBeNull();
+    expect(boardState?.movesUsed).toBe(1);
+    expect(boardState?.history).toEqual([]);
   });
 
   it('applying a rejected move leaves state unchanged', () => {

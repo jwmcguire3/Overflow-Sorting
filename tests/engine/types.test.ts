@@ -54,6 +54,7 @@ describe('engine types exports', () => {
       destinationBins: [destinationBin],
       stagingSlots: [stagingSlot],
       stagingCapacity: 3,
+      history: [],
       movesUsed: 0,
       moveBudget: null,
       status: 'playing',

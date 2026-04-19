@@ -24,6 +24,7 @@ interface GameStore {
   readonly boardState: BoardState | null;
   loadBoard: (config: BoardConfig) => void;
   applyMove: (move: Move) => MoveResult;
+  undo: () => MoveResult;
   reset: () => void;
 }
 
@@ -59,6 +60,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     return result;
   },
+  undo: () => get().applyMove({ type: 'undo' }),
   reset: () => {
     set({
       boardState: null,

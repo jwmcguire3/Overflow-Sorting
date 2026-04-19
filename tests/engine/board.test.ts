@@ -8,6 +8,7 @@ import {
   createInitialBoard,
   createItemId,
   pullItem,
+  undoMove,
 } from '../../src/engine';
 import type {
   BoardConfig,
@@ -66,6 +67,7 @@ const makeBoardState = (overrides: Partial<BoardState> = {}): BoardState => ({
   destinationBins: [],
   stagingSlots: makeStagingSlots([]),
   stagingCapacity: 0,
+  history: [],
   movesUsed: 0,
   moveBudget: null,
   status: 'playing',
@@ -86,6 +88,7 @@ describe('engine board mechanics', () => {
 
     expect(result.status).toBe('playing');
     expect(result.movesUsed).toBe(0);
+    expect(result.history).toEqual([]);
     expect(result.stagingSlots).toEqual(makeStagingSlots([null, null]));
     expect(result.sourceBins[0]?.layers[0]?.[0]?.id).toBe(med1.id);
     expect(result.destinationBins[0]?.contents).toEqual([]);
@@ -153,6 +156,7 @@ describe('engine board mechanics', () => {
     expect(result.nextState.sourceBins[0]?.layers).toEqual([[next]]);
     expect(result.nextState.stagingSlots[0]?.item?.id).toBe(top.id);
     expect(result.nextState.movesUsed).toBe(1);
+    expect(result.nextState.history).toEqual([state]);
   });
 
   it('pulling final item leaves source bin with empty layers', () => {
@@ -303,7 +307,7 @@ describe('engine board mechanics', () => {
     expect(checkStuckState(state)).toBe(false);
   });
 
-  it('applyMove dispatches pull and commit, and undo is not implemented', () => {
+  it('applyMove dispatches pull, commit, and undo', () => {
     const item = makeItem('med-a', 'medical', 'syringe' as ItemVariant<'medical'>);
     const pullState = makeBoardState({
       sourceBins: [makeSourceBin('source-a', [[item]])],
@@ -331,9 +335,15 @@ describe('engine board mechanics', () => {
     });
     expect(committed.success).toBe(true);
 
-    const undone = applyMove(commitState, { type: 'undo' });
-    expect(undone.success).toBe(false);
-    expect(undone.reason).toBe('not implemented in phase 1');
+    const undone = applyMove(
+      makeBoardState({
+        history: [commitState],
+        movesUsed: 2,
+      }),
+      { type: 'undo' },
+    );
+    expect(undone.success).toBe(true);
+    expect(undone.nextState.movesUsed).toBe(1);
   });
 
   it('move budget exceeding on pull sets status to lost', () => {
@@ -386,5 +396,137 @@ describe('engine board mechanics', () => {
     expect(result.nextState.stagingSlots[0]?.item?.id).toBe(occupied.id);
     expect(result.nextState.stagingSlots[1]?.item?.id).toBe(sourceItem.id);
     expect(result.nextState.stagingSlots[2]?.item).toBeNull();
+  });
+
+  it('single undo restores the prior state and charges one move', () => {
+    const item = makeItem('med-a', 'medical', 'syringe' as ItemVariant<'medical'>);
+    const previousState = makeBoardState({
+      sourceBins: [makeSourceBin('source-a', [[item]])],
+      stagingSlots: makeStagingSlots([null]),
+      stagingCapacity: 1,
+      movesUsed: 0,
+    });
+    const currentState = makeBoardState({
+      sourceBins: [makeSourceBin('source-a', [])],
+      stagingSlots: makeStagingSlots([item]),
+      stagingCapacity: 1,
+      history: [previousState],
+      movesUsed: 1,
+    });
+
+    const result = undoMove(currentState);
+
+    expect(result.success).toBe(true);
+    expect(result.nextState.sourceBins).toEqual(previousState.sourceBins);
+    expect(result.nextState.stagingSlots).toEqual(previousState.stagingSlots);
+    expect(result.nextState.movesUsed).toBe(1);
+    expect(result.nextState.history).toEqual([]);
+  });
+
+  it('chained undos step backward through prior states', () => {
+    const item = makeItem('med-a', 'medical', 'syringe' as ItemVariant<'medical'>);
+    const initialState = makeBoardState({
+      sourceBins: [makeSourceBin('source-a', [[item]])],
+      stagingSlots: makeStagingSlots([null]),
+      stagingCapacity: 1,
+      movesUsed: 0,
+    });
+    const afterPull = makeBoardState({
+      sourceBins: [makeSourceBin('source-a', [])],
+      stagingSlots: makeStagingSlots([item]),
+      stagingCapacity: 1,
+      history: [initialState],
+      movesUsed: 1,
+    });
+    const afterCommit = makeBoardState({
+      sourceBins: [makeSourceBin('source-a', [])],
+      destinationBins: [makeDestinationBin('dest-med', 'medical', [item])],
+      stagingSlots: makeStagingSlots([null]),
+      stagingCapacity: 1,
+      history: [initialState, afterPull],
+      movesUsed: 2,
+    });
+
+    const firstUndo = undoMove(afterCommit);
+    const secondUndo = undoMove(firstUndo.nextState);
+
+    expect(firstUndo.success).toBe(true);
+    expect(firstUndo.nextState.stagingSlots[0]?.item?.id).toBe(item.id);
+    expect(firstUndo.nextState.movesUsed).toBe(2);
+    expect(secondUndo.success).toBe(true);
+    expect(secondUndo.nextState.sourceBins[0]?.layers[0]?.[0]?.id).toBe(item.id);
+    expect(secondUndo.nextState.movesUsed).toBe(1);
+  });
+
+  it('undo with empty history fails', () => {
+    const state = makeBoardState();
+
+    const result = undoMove(state);
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('nothing to undo');
+    expect(result.nextState).toBe(state);
+  });
+
+  it('undo increments the restored move count', () => {
+    const previousState = makeBoardState({
+      movesUsed: 4,
+    });
+    const currentState = makeBoardState({
+      history: [previousState],
+      movesUsed: 7,
+    });
+
+    const result = undoMove(currentState);
+
+    expect(result.success).toBe(true);
+    expect(result.nextState.movesUsed).toBe(5);
+  });
+
+  it('undo on a lost state stays lost', () => {
+    const previousState = makeBoardState({
+      movesUsed: 0,
+      moveBudget: 5,
+      status: 'playing',
+    });
+    const currentState = makeBoardState({
+      history: [previousState],
+      movesUsed: 6,
+      moveBudget: 5,
+      status: 'lost',
+    });
+
+    const result = undoMove(currentState);
+
+    expect(result.success).toBe(true);
+    expect(result.nextState.movesUsed).toBe(1);
+    expect(result.nextState.status).toBe('lost');
+  });
+
+  it('successful moves cap history at 20 entries', () => {
+    const item = makeItem('med-a', 'medical', 'syringe' as ItemVariant<'medical'>);
+    const history = Array.from({ length: 20 }, (_, index) =>
+      makeBoardState({
+        movesUsed: index,
+      }),
+    );
+    const oldestRetained = history[1];
+    const newestRetained = history[19];
+    const state = makeBoardState({
+      sourceBins: [makeSourceBin('source-a', [[item]])],
+      stagingSlots: makeStagingSlots([null]),
+      stagingCapacity: 1,
+      history,
+      movesUsed: 20,
+    });
+
+    const result = pullItem(state, 'source-a', item.id);
+
+    expect(result.success).toBe(true);
+    expect(result.nextState.history).toHaveLength(20);
+    expect(result.nextState.history[0]).toBe(oldestRetained);
+    expect(result.nextState.history[19]).toBe(state);
+    expect(result.nextState.history).not.toContain(history[0]);
+    expect(result.nextState.history).toContain(newestRetained);
   });
 });

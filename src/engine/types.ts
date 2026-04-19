@@ -88,6 +88,7 @@ export interface BoardState {
   readonly destinationBins: ReadonlyArray<DestinationBin>;
   readonly stagingSlots: ReadonlyArray<StagingSlot>;
   readonly stagingCapacity: number;
+  readonly history: ReadonlyArray<BoardState>;
   readonly movesUsed: number;
   readonly moveBudget: number | null;
   readonly status: 'playing' | 'won' | 'lost' | 'stuck';

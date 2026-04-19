@@ -10,6 +10,8 @@ import type {
   StagingSlot,
 } from './types';
 
+const MAX_HISTORY_ENTRIES = 20;
+
 const createMoveResult = (
   nextState: BoardState,
   success: boolean,
@@ -19,6 +21,9 @@ const createMoveResult = (
   success,
   reason,
 });
+
+const pushHistory = (history: ReadonlyArray<BoardState>, snapshot: BoardState) =>
+  [...history, snapshot].slice(-MAX_HISTORY_ENTRIES);
 
 const incrementMovesAndApplyBudget = (
   state: BoardState,
@@ -74,6 +79,7 @@ export const createInitialBoard = (config: BoardConfig): BoardState => {
     destinationBins,
     stagingSlots,
     stagingCapacity: config.stagingCapacity,
+    history: [],
     movesUsed: 0,
     moveBudget: config.moveBudget,
     status: 'playing',
@@ -146,6 +152,7 @@ export const pullItem = (
     ...state,
     sourceBins: nextSourceBins,
     stagingSlots: nextStagingSlots,
+    history: pushHistory(state.history, state),
   });
 
   return createMoveResult(nextState, true, null);
@@ -237,6 +244,7 @@ export const commitItem = (
     ...state,
     destinationBins: nextDestinationBins,
     stagingSlots: nextStagingSlots,
+    history: pushHistory(state.history, state),
   });
 
   const nextState: BoardState =
@@ -246,6 +254,26 @@ export const commitItem = (
           ...postMoveState,
           status: 'won',
         };
+
+  return createMoveResult(nextState, true, null);
+};
+
+export const undoMove = (state: BoardState): MoveResult => {
+  const previousState = state.history[state.history.length - 1];
+
+  if (!previousState) {
+    return createMoveResult(state, false, 'nothing to undo');
+  }
+
+  const movesUsed = previousState.movesUsed + 1;
+  const budgetExceeded =
+    previousState.moveBudget !== null && movesUsed > previousState.moveBudget;
+  const nextState: BoardState = {
+    ...previousState,
+    movesUsed,
+    status:
+      state.status === 'lost' || budgetExceeded ? 'lost' : previousState.status,
+  };
 
   return createMoveResult(nextState, true, null);
 };
@@ -292,5 +320,5 @@ export const applyMove = (state: BoardState, move: Move): MoveResult => {
     return commitItem(state, move.itemId, move.destBinId);
   }
 
-  return createMoveResult(state, false, 'not implemented in phase 1');
+  return undoMove(state);
 };
