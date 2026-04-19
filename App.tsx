@@ -1,24 +1,20 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
+
+import { LevelScreen } from './src/screens';
 
 export default function App() {
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Overflow Sorting</Text>
+    <GestureHandlerRootView style={styles.container}>
+      <LevelScreen />
       <StatusBar style="auto" />
-    </View>
+    </GestureHandlerRootView>
   );
 }
 
-const styles = StyleSheet.create({
+const styles = {
   container: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F5F1E8',
   },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-  },
-});
+};
