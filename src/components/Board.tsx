@@ -4,6 +4,7 @@ import {
   Canvas,
   Circle,
   Group,
+  Path,
   Rect,
   RoundedRect,
   Text as SkiaText,
@@ -50,7 +51,8 @@ import {
   getDestinationBinLockItem,
   getItemCirclePositions,
   getTopLayer,
-  getVariantLetter,
+  getVariantGlyphSpec,
+  type GlyphPrimitive,
   type Frame,
 } from './board-helpers';
 
@@ -135,12 +137,6 @@ const BODY_FONT = matchFont({
   fontStyle: 'normal',
   fontWeight: 'normal',
 });
-const ITEM_FONT = matchFont({
-  fontFamily: 'Arial',
-  fontSize: 16,
-  fontStyle: 'normal',
-  fontWeight: 'bold',
-});
 const WARNING_COLOR = '#C78A11';
 const DANGER_COLOR = '#B5412C';
 const DRAG_SCALE = 1.08;
@@ -151,6 +147,7 @@ const REJECT_FILL = 'rgba(224, 81, 81, 0.12)';
 const COMMIT_HIGHLIGHT_FILL = '#E2EDDE';
 const COMPLETE_HIGHLIGHT_FILL = '#DCE8D5';
 const COMPLETE_HIGHLIGHT_STROKE = '#3F5F4A';
+const TOKEN_GLYPH_COLOR = '#FFF7E6';
 
 const getFrameCenter = (frame: Frame) => ({
   x: frame.x + frame.width / 2,
@@ -172,6 +169,115 @@ const frameStyle = (frame: Frame) => ({
   width: frame.width,
   height: frame.height,
 });
+
+const renderGlyphPrimitive = (
+  primitive: GlyphPrimitive,
+  color: string,
+  key: string,
+) => {
+  switch (primitive.type) {
+    case 'circle':
+      return (
+        <Circle
+          key={key}
+          cx={primitive.cx}
+          cy={primitive.cy}
+          r={primitive.r}
+          color={color}
+          style={primitive.style}
+          strokeWidth={primitive.strokeWidth}
+        />
+      );
+    case 'rect':
+      return (
+        <Rect
+          key={key}
+          x={primitive.x}
+          y={primitive.y}
+          width={primitive.width}
+          height={primitive.height}
+          color={color}
+          style={primitive.style}
+          strokeWidth={primitive.strokeWidth}
+        />
+      );
+    case 'roundedRect':
+      return (
+        <RoundedRect
+          key={key}
+          x={primitive.x}
+          y={primitive.y}
+          width={primitive.width}
+          height={primitive.height}
+          r={primitive.r}
+          color={color}
+          style={primitive.style}
+          strokeWidth={primitive.strokeWidth}
+        />
+      );
+    case 'path':
+      return (
+        <Path
+          key={key}
+          path={primitive.path}
+          color={color}
+          style={primitive.style}
+          strokeWidth={primitive.strokeWidth}
+          strokeCap="round"
+          strokeJoin="round"
+        />
+      );
+  }
+};
+
+const renderItemGlyph = (
+  item: Item,
+  centerX: number,
+  centerY: number,
+  size: number,
+  color: string,
+  keyPrefix: string,
+) =>
+  getVariantGlyphSpec(item, {
+    centerX,
+    centerY,
+    size,
+  }).map((primitive, index) =>
+    renderGlyphPrimitive(primitive, color, `${keyPrefix}-${String(index)}`),
+  );
+
+const renderToken = (
+  item: Item,
+  centerX: number,
+  centerY: number,
+  radius: number,
+  keyPrefix: string,
+  glyphColor = TOKEN_GLYPH_COLOR,
+) => (
+  <Group key={keyPrefix}>
+    <Circle
+      cx={centerX}
+      cy={centerY}
+      r={radius}
+      color={getCategoryColor(item.category)}
+    />
+    {renderItemGlyph(item, centerX, centerY, radius * 1.4, glyphColor, `${keyPrefix}-glyph`)}
+  </Group>
+);
+
+const TokenGlyph = ({
+  item,
+  size,
+  color = TOKEN_GLYPH_COLOR,
+}: {
+  readonly item: Item;
+  readonly size: number;
+  readonly color?: string;
+}) => (
+  <Canvas style={StyleSheet.absoluteFill}>
+    {renderItemGlyph(item, size / 2, size / 2, size * 0.74, color, 'token')}
+  </Canvas>
+);
 
 const renderSourceBin = (
   bin: SourceBin,
@@ -218,21 +324,7 @@ const renderSourceBin = (
         }
 
         return (
-          <Group key={item.id}>
-            <Circle
-              cx={position.x}
-              cy={position.y}
-              r={position.radius}
-              color={getCategoryColor(item.category)}
-            />
-            <SkiaText
-              x={position.x - position.radius * 0.35}
-              y={position.y + position.radius * 0.25}
-              text={getVariantLetter(item)}
-              font={ITEM_FONT}
-              color="#FFFFFF"
-            />
-          </Group>
+          renderToken(item, position.x, position.y, position.radius, item.id)
         );
       })}
     </Group>
@@ -282,21 +374,13 @@ const renderStagingSlot = (
         color={LABEL_COLOR}
       />
       {item ? (
-        <>
-          <Circle
-            cx={frame.x + frame.width / 2}
-            cy={frame.y + frame.height * 0.62}
-            r={Math.min(22, frame.width / 5)}
-            color={getCategoryColor(item.category)}
-          />
-          <SkiaText
-            x={frame.x + frame.width / 2 - 6}
-            y={frame.y + frame.height * 0.62 + 6}
-            text={getVariantLetter(item)}
-            font={ITEM_FONT}
-            color="#FFFFFF"
-          />
-        </>
+        renderToken(
+          item,
+          frame.x + frame.width / 2,
+          frame.y + frame.height * 0.62,
+          Math.min(22, frame.width / 5),
+          `staging-item-${String(slot.index)}`,
+        )
       ) : null}
     </Group>
   );
@@ -387,21 +471,7 @@ const renderDestinationBin = (
         }
 
         return (
-          <Group key={item.id}>
-            <Circle
-              cx={position.x}
-              cy={position.y}
-              r={position.radius}
-              color={getCategoryColor(item.category)}
-            />
-            <SkiaText
-              x={position.x - position.radius * 0.35}
-              y={position.y + position.radius * 0.25}
-              text={getVariantLetter(item)}
-              font={ITEM_FONT}
-              color="#FFFFFF"
-            />
-          </Group>
+          renderToken(item, position.x, position.y, position.radius, item.id)
         );
       })}
       {lockItem
@@ -419,13 +489,14 @@ const renderDestinationBin = (
                 r={position.radius - 4}
                 color={LOCKED_FILL}
               />
-              <SkiaText
-                x={position.x - position.radius * 0.35}
-                y={position.y + position.radius * 0.25}
-                text={getVariantLetter(lockItem)}
-                font={ITEM_FONT}
-                color={getCategoryColor(lockItem.category)}
-              />
+              {renderItemGlyph(
+                lockItem,
+                position.x,
+                position.y,
+                position.radius * 1.12,
+                getCategoryColor(lockItem.category),
+                `${bin.id}-ghost-${String(index)}-glyph`,
+              )}
             </Group>
           ))
         : null}
@@ -539,7 +610,7 @@ const DraggedItem = ({
       },
     ]}
   >
-    <Text style={styles.draggedItemLabel}>{getVariantLetter(item)}</Text>
+    <TokenGlyph item={item} size={diameter} />
   </View>
 );
 
@@ -745,7 +816,7 @@ const TransferOverlay = ({
         animatedStyle,
       ]}
     >
-      <Text style={styles.draggedItemLabel}>{getVariantLetter(transfer.item)}</Text>
+      <TokenGlyph item={transfer.item} size={diameter} />
     </Animated.View>
   );
 };
@@ -855,7 +926,7 @@ const ClearReleaseItem = ({
         animatedStyle,
       ]}
     >
-      <Text style={styles.clearItemLabel}>{getVariantLetter(item)}</Text>
+      <TokenGlyph item={item} size={position.radius * 2} />
     </Animated.View>
   );
 };
@@ -1738,12 +1809,6 @@ const styles = StyleSheet.create({
     borderWidth: 4,
     zIndex: 1,
   },
-  draggedItemLabel: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 0.2,
-  },
   clearItem: {
     position: 'absolute',
     alignItems: 'center',
@@ -1751,12 +1816,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#FFFFFF',
     zIndex: 1,
-  },
-  clearItemLabel: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '800',
-    letterSpacing: 0.2,
   },
   toolbar: {
     paddingHorizontal: 16,
